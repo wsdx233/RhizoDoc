@@ -26,7 +26,9 @@ const state = {
   isResizing: false,
   resizeNodeId: null,
   resizeStartWidth: 0,
+  resizeStartNodeX: 0,
   resizeStartX: 0,
+  resizeHandleSide: 'right',
   isDraggingMinimap: false,
   nodes: [],
   edges: [],
@@ -781,7 +783,9 @@ function onNodesLayerMouseDown(event) {
     state.isResizing = true;
     state.resizeNodeId = nodeEl.id;
     state.resizeStartWidth = nodeEl.offsetWidth || node.width || NODE_WIDTH;
+    state.resizeStartNodeX = node.x;
     state.resizeStartX = event.clientX;
+    state.resizeHandleSide = nodeEl.dataset.dir === 'left' ? 'left' : 'right';
     hideTooltip();
     hideMenus();
     event.preventDefault();
@@ -844,8 +848,17 @@ function onWindowMouseMove(event) {
     const nodeEl = document.getElementById(state.resizeNodeId);
     if (!node || !nodeEl) return;
     const delta = (event.clientX - state.resizeStartX) / state.canvas.scale;
-    const newWidth = clamp(state.resizeStartWidth + delta, NODE_MIN_WIDTH, NODE_MAX_WIDTH);
+    const resizingFromLeft = state.resizeHandleSide === 'left';
+    const newWidth = clamp(
+      state.resizeStartWidth + (resizingFromLeft ? -delta : delta),
+      NODE_MIN_WIDTH,
+      NODE_MAX_WIDTH,
+    );
     node.width = newWidth;
+    if (resizingFromLeft) {
+      node.x = state.resizeStartNodeX + state.resizeStartWidth - newWidth;
+      nodeEl.style.left = `${node.x}px`;
+    }
     node.updatedAt = new Date().toISOString();
     nodeEl.style.width = `${newWidth}px`;
     updateNodeCollapseState(node.id);
@@ -876,6 +889,7 @@ function onWindowMouseUp() {
   state.draggedNodeId = null;
   state.isResizing = false;
   state.resizeNodeId = null;
+  state.resizeHandleSide = 'right';
   state.isDraggingMinimap = false;
   DOM.minimap.classList.remove('dragging');
 }
