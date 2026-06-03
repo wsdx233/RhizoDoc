@@ -1,12 +1,13 @@
 import './styles.css';
-import { fetchJson, postJson } from './api.js';
+import { fetchJson, postEventStream, postJson } from './api.js';
 import { demoDocument } from './demo.js';
 import { byId, collectDomRefs } from './dom.js';
 import { postProcessNodeContent, renderMarkdown } from './markdown.js';
 import { createProgressCard as createProgressCardElement, showToast as showToastMessage, updateProgressCard } from './ui.js';
 import { clamp, closestElement, codeFenceText, cssAttr, escapeHtml, formatBytes, genId, plainExcerpt, safeFileName } from './utils.js';
+import { normalizeGeneratedNode } from '../shared/generated-node.js';
 import { isFlowObject as isValidFlowShape, validateFlow } from '../shared/schemas.js';
-import type { ApiConfigResponse, FlowListResponse, LLMGenerateResponse, SaveFlowResponse } from '../shared/types.js';
+import type { ApiConfigResponse, FlowListResponse, LLMStreamDoneEvent, LLMStreamEvent, SaveFlowResponse } from '../shared/types.js';
 
 
 const NODE_WIDTH = 340;
@@ -323,31 +324,118 @@ async function generateInitialDocument() {
     stage: '准备上下文',
     summary: '正在创建第一张文档节点',
   });
+
+  const fallbackTitle = prompt.slice(0, 24) || 'AI 生成文档';
+  createDocument(fallbackTitle, '_正在流式生成根文档..._', { force: true });
+  const root = getRootNode();
+  if (!root) return;
+  root.kind = 'ai';
+  root.loading = true;
+  root.llm = { mode: 'initial', userPrompt: prompt };
+  updateNodeElement(root.id);
+
+  let rawText = '';
+  let finalData: LLMStreamDoneEvent | null = null;
+  let previewFrame = 0;
+
+  const initialPayload = { mode: 'initial', userPrompt: prompt };
+  const updateStreamingRoot = () => {
+    previewFrame = 0;
+    if (!rawText.trim()) return;
+    const generated = normalizeGeneratedNode(rawText, initialPayload);
+    root.title = generated.title || fallbackTitle;
+    root.content = generated.content || '（正在生成正文…）';
+    root.loading = true;
+    root.updatedAt = new Date().toISOString();
+    state.flowName = root.title;
+    updateNodeElement(root.id);
+    updateFlowName();
+    updateProgressCard(progressId, { stage: '流式生成中', summary: plainExcerpt(root.content, 120) });
+  };
+
+  const schedulePreview = () => {
+    if (previewFrame) return;
+    previewFrame = requestAnimationFrame(updateStreamingRoot);
+  };
+
   try {
-    updateProgressCard(progressId, { stage: '请求模型', summary: '模型正在生成完整 Markdown 文档' });
-    const data = await postJson<LLMGenerateResponse>('/api/llm/generate', { mode: 'initial', userPrompt: prompt });
+    updateProgressCard(progressId, { stage: '请求模型', summary: '内容会边生成边渲染，可直接选中已出现文本继续批注' });
+    await postEventStream<LLMStreamEvent>('/api/llm/stream', initialPayload, (event) => {
+      if (event.type === 'ready') {
+        updateProgressCard(progressId, { stage: '已连接模型', summary: `${event.model} / ${event.reasoningEffort || 'off'}` });
+        return;
+      }
+      if (event.type === 'delta') {
+        rawText += event.delta;
+        schedulePreview();
+        return;
+      }
+      if (event.type === 'thinking_delta') {
+        updateProgressCard(progressId, { stage: '模型思考中', summary: plainExcerpt(event.delta, 120) });
+        return;
+      }
+      if (event.type === 'done') {
+        finalData = event;
+        return;
+      }
+      if (event.type === 'error') {
+        throw new Error(event.detail || event.error || 'LLM 流式调用失败');
+      }
+    });
 
-    const title = data.title || prompt.slice(0, 24) || 'AI 生成文档';
-    createDocument(title, data.content || '（模型没有返回内容）', { force: true });
-
-    const root = getRootNode();
-    if (root) {
-      root.kind = 'ai';
-      root.llm = {
-        mode: 'initial',
-        userPrompt: prompt,
-        model: data.model,
-        apiType: data.apiType,
-        reasoningEffort: data.reasoningEffort,
-        usage: data.usage,
-      };
-      root.updatedAt = new Date().toISOString();
-      updateNodeElement(root.id);
+    if (previewFrame) {
+      cancelAnimationFrame(previewFrame);
+      previewFrame = 0;
     }
-    updateProgressCard(progressId, { stage: '生成完成', summary: plainExcerpt(data.content || '', 120), done: true });
+
+    const data = finalData || {
+      type: 'done',
+      title: normalizeGeneratedNode(rawText, initialPayload).title,
+      content: normalizeGeneratedNode(rawText, initialPayload).content,
+      raw: rawText,
+      usage: null,
+      model: '',
+      apiType: '',
+      reasoningEffort: '',
+    };
+
+    root.title = data.title || fallbackTitle;
+    root.content = data.content || '（模型没有返回内容）';
+    root.loading = false;
+    root.llm = {
+      mode: 'initial',
+      userPrompt: prompt,
+      model: data.model,
+      apiType: data.apiType,
+      reasoningEffort: data.reasoningEffort,
+      usage: data.usage,
+    };
+    root.updatedAt = new Date().toISOString();
+    state.flowName = root.title;
+    updateNodeElement(root.id);
+    updateFlowName();
+    updateProgressCard(progressId, { stage: '生成完成', summary: plainExcerpt(root.content || '', 120), done: true });
     showToast('AI 新文档已生成');
   } catch (error) {
-    updateProgressCard(progressId, { stage: '生成失败', summary: error.message, error: true });
+    if (previewFrame) {
+      cancelAnimationFrame(previewFrame);
+      previewFrame = 0;
+    }
+    root.title = '生成失败';
+    root.content = [
+      '> LLM 调用失败。',
+      '',
+      '请检查 pi 默认模型、凭据配置，以及服务端控制台错误。',
+      '',
+      '```text',
+      codeFenceText(error.message || String(error)),
+      '```',
+    ].join('\n');
+    root.loading = false;
+    root.error = error.message || String(error);
+    root.updatedAt = new Date().toISOString();
+    updateNodeElement(root.id);
+    updateProgressCard(progressId, { stage: '生成失败', summary: error.message || String(error), error: true });
     showToast(`生成新文档失败：${error.message}`);
   } finally {
     setInitialGenerateLoading(false);
@@ -1508,13 +1596,71 @@ async function callLLMAndUpdate(nodeId, payload, { progressId = null } = {}) {
   });
   const progressTimers = [
     setTimeout(() => updateProgressCard(progressId, { stage: '请求模型', summary: '上下文已发送，等待模型响应' }), 450),
-    setTimeout(() => updateProgressCard(progressId, { stage: '大模型生成中', summary: '正在生成标题和 Markdown 正文' }), 1800),
+    setTimeout(() => updateProgressCard(progressId, { stage: '流式生成中', summary: '内容会边生成边渲染，可直接选中已出现文本继续批注' }), 1800),
   ];
 
-  try {
-    const data = await postJson<LLMGenerateResponse>('/api/llm/generate', enrichedPayload);
-    updateProgressCard(progressId, { stage: '解析响应', summary: '正在渲染生成节点' });
+  let rawText = '';
+  let finalData: LLMStreamDoneEvent | null = null;
+  let previewFrame = 0;
 
+  const updateStreamingPreview = () => {
+    previewFrame = 0;
+    if (!rawText.trim()) return;
+    const generated = normalizeGeneratedNode(rawText, enrichedPayload);
+    node.title = generated.title || 'AI 生成节点';
+    node.content = generated.content || '（正在生成正文…）';
+    node.loading = true;
+    node.updatedAt = new Date().toISOString();
+    updateNodeElement(nodeId);
+    updateProgressCard(progressId, { stage: '流式生成中', summary: plainExcerpt(node.content, 130) });
+  };
+
+  const schedulePreview = () => {
+    if (previewFrame) return;
+    previewFrame = requestAnimationFrame(updateStreamingPreview);
+  };
+
+  try {
+    await postEventStream<LLMStreamEvent>('/api/llm/stream', enrichedPayload, (event) => {
+      if (event.type === 'ready') {
+        updateProgressCard(progressId, { stage: '已连接模型', summary: `${event.model} / ${event.reasoningEffort || 'off'}` });
+        return;
+      }
+      if (event.type === 'delta') {
+        rawText += event.delta;
+        schedulePreview();
+        return;
+      }
+      if (event.type === 'thinking_delta') {
+        updateProgressCard(progressId, { stage: '模型思考中', summary: plainExcerpt(event.delta, 130) });
+        return;
+      }
+      if (event.type === 'done') {
+        finalData = event;
+        return;
+      }
+      if (event.type === 'error') {
+        throw new Error(event.detail || event.error || 'LLM 流式调用失败');
+      }
+    });
+
+    if (previewFrame) {
+      cancelAnimationFrame(previewFrame);
+      previewFrame = 0;
+    }
+
+    const data = finalData || {
+      type: 'done',
+      title: normalizeGeneratedNode(rawText, enrichedPayload).title,
+      content: normalizeGeneratedNode(rawText, enrichedPayload).content,
+      raw: rawText,
+      usage: null,
+      model: '',
+      apiType: '',
+      reasoningEffort: '',
+    };
+
+    updateProgressCard(progressId, { stage: '解析响应', summary: '正在渲染生成节点' });
     node.title = data.title || 'AI 生成节点';
     node.content = data.content || '（模型没有返回内容）';
     node.loading = false;
@@ -1532,6 +1678,10 @@ async function callLLMAndUpdate(nodeId, payload, { progressId = null } = {}) {
     updateProgressCard(progressId, { stage: '生成完成', summary: plainExcerpt(node.content, 130), done: true });
     showToast('LLM 节点已生成');
   } catch (error) {
+    if (previewFrame) {
+      cancelAnimationFrame(previewFrame);
+      previewFrame = 0;
+    }
     node.title = '生成失败';
     node.content = [
       '> LLM 调用失败。',

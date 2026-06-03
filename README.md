@@ -10,6 +10,7 @@ RhizoDoc is a local-first AI document workspace that turns long documents, notes
 - **Markdown rendering**: node content is rendered with `marked` and sanitized with `DOMPurify`, with syntax highlighting powered by Highlight.js and LaTeX formula rendering powered by KaTeX.
 - **AI-assisted expansion**:
   - generate the first/root document from a prompt;
+  - stream model output into nodes as it is generated, so already-visible text can be selected and annotated immediately;
   - select text and generate linked child nodes;
   - right-click nodes to expand or regenerate content;
   - right-click the canvas to create independent nodes.

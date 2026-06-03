@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { completeSimple } from '@earendil-works/pi-ai';
+import { completeSimple, streamSimple } from '@earendil-works/pi-ai';
 import { AuthStorage, getAgentDir, ModelRegistry, SettingsManager } from '@earendil-works/pi-coding-agent';
 import { normalizeRhizoDocConfig } from './src/shared/config.js';
 import { normalizeGeneratedNode } from './src/shared/generated-node.js';
@@ -88,6 +88,83 @@ app.post('/api/llm/generate', async (req, res) => {
       apiType: error.apiType,
       reasoningEffort: error.reasoningEffort,
     });
+  }
+});
+
+app.post('/api/llm/stream', async (req, res) => {
+  const abortController = new AbortController();
+  res.on('close', () => {
+    if (!res.writableEnded) abortController.abort();
+  });
+
+  try {
+    const payload = normalizeLLMPayload(req.body || {});
+    const stream = await requestLLMNodeStream(payload, { signal: abortController.signal });
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+    });
+    res.flushHeaders?.();
+
+    writeSse(res, 'ready', {
+      model: stream.model,
+      apiType: stream.apiType,
+      reasoningEffort: stream.reasoningEffort,
+    });
+
+    for await (const event of stream.events) {
+      if (event.type === 'text_delta') {
+        writeSse(res, 'delta', { delta: event.delta });
+      } else if (event.type === 'thinking_delta') {
+        writeSse(res, 'thinking_delta', { delta: event.delta });
+      } else if (event.type === 'done') {
+        const outputText = extractPiText(event.message);
+        const generated = normalizeGeneratedNode(outputText, payload);
+        writeSse(res, 'done', {
+          title: generated.title,
+          content: generated.content,
+          raw: outputText,
+          usage: event.message.usage || null,
+          model: `${stream.provider}/${event.message.responseModel || event.message.model || stream.modelId}`,
+          apiType: event.message.api || stream.apiType,
+          reasoningEffort: stream.reasoningEffort,
+        });
+      } else if (event.type === 'error') {
+        writeSse(res, 'error', {
+          error: 'LLM 调用失败',
+          detail: event.error.errorMessage || '模型流式输出失败',
+          model: stream.model,
+          apiType: stream.apiType,
+          reasoningEffort: stream.reasoningEffort,
+        });
+      }
+    }
+
+    res.end();
+  } catch (error) {
+    console.error('[LLM Stream Error]', error);
+    if (!res.headersSent) {
+      res.status(error.status || 500).json({
+        error: 'LLM 流式调用失败',
+        detail: error.message || String(error),
+        provider: error.provider,
+        model: error.model,
+        apiType: error.apiType,
+        reasoningEffort: error.reasoningEffort,
+      });
+      return;
+    }
+    writeSse(res, 'error', {
+      error: 'LLM 流式调用失败',
+      detail: error.message || String(error),
+      provider: error.provider,
+      model: error.model,
+      apiType: error.apiType,
+      reasoningEffort: error.reasoningEffort,
+    });
+    res.end();
   }
 });
 
@@ -198,7 +275,26 @@ async function requestLLMNode(payload: LLMGeneratePayload) {
   return createPiNode({ instructions, input });
 }
 
+async function requestLLMNodeStream(payload: LLMGeneratePayload, { signal }: { signal?: AbortSignal } = {}) {
+  const instructions = buildInstructions();
+  const input = buildLLMInput(payload);
+  return createPiNodeStream({ instructions, input, signal });
+}
+
 async function createPiNode({ instructions, input }: { instructions: string; input: string }) {
+  const stream = await createPiNodeStream({ instructions, input });
+  const response = await stream.events.result();
+
+  return {
+    outputText: extractPiText(response),
+    usage: response.usage || null,
+    model: `${stream.provider}/${response.responseModel || response.model || stream.modelId}`,
+    apiType: response.api || stream.apiType,
+    reasoningEffort: stream.reasoningEffort,
+  };
+}
+
+async function createPiNodeStream({ instructions, input, signal }: { instructions: string; input: string; signal?: AbortSignal }) {
   const config = await getPiModelConfig();
   if (!config.ready) {
     const error = new Error(config.error || 'Pi 模型未配置或缺少凭据。请使用 pi /model 或 pi-ai login 配置模型。') as Error & Record<string, unknown>;
@@ -211,12 +307,13 @@ async function createPiNode({ instructions, input }: { instructions: string; inp
   }
 
   const retrySettings = settingsManager.getProviderRetrySettings();
-  const response = await completeSimple(config.model, {
+  const events = streamSimple(config.model, {
     systemPrompt: instructions,
     messages: [{ role: 'user', content: input, timestamp: Date.now() }],
   }, {
     apiKey: config.apiKey,
     headers: config.headers,
+    signal,
     reasoning: config.thinkingLevel === 'off' ? undefined : (config.thinkingLevel as any),
     maxTokens: Math.min(DEFAULT_MAX_TOKENS, config.model.maxTokens || DEFAULT_MAX_TOKENS),
     timeoutMs: retrySettings.timeoutMs,
@@ -225,10 +322,11 @@ async function createPiNode({ instructions, input }: { instructions: string; inp
   });
 
   return {
-    outputText: extractPiText(response),
-    usage: response.usage || null,
-    model: `${config.model.provider}/${response.responseModel || response.model || config.model.id}`,
-    apiType: response.api || config.model.api || 'pi',
+    events,
+    provider: config.model.provider,
+    model: `${config.model.provider}/${config.model.id}`,
+    modelId: config.model.id,
+    apiType: config.model.api || 'pi',
     reasoningEffort: config.thinkingLevel || 'off',
   };
 }
@@ -301,6 +399,11 @@ function extractPiText(response: any): string {
     .map((part) => part.text)
     .join('\n')
     .trim();
+}
+
+function writeSse(res: express.Response, event: string, data: unknown) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
 function parseCliOptions(args: string[]) {

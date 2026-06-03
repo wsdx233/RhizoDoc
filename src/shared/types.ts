@@ -108,6 +108,41 @@ export type LLMGenerateResponse = {
   reasoningEffort: string;
 };
 
+export type LLMStreamReadyEvent = {
+  type: 'ready';
+  model: string;
+  apiType: string;
+  reasoningEffort: string;
+};
+
+export type LLMStreamDeltaEvent = {
+  type: 'delta' | 'thinking_delta';
+  delta: string;
+};
+
+export type LLMStreamDoneEvent = {
+  type: 'done';
+  title: string;
+  content: string;
+  raw: string;
+  usage: unknown | null;
+  model: string;
+  apiType: string;
+  reasoningEffort: string;
+};
+
+export type LLMStreamErrorEvent = {
+  type: 'error';
+  error: string;
+  detail?: string;
+  provider?: string;
+  model?: string;
+  apiType?: string;
+  reasoningEffort?: string;
+};
+
+export type LLMStreamEvent = LLMStreamReadyEvent | LLMStreamDeltaEvent | LLMStreamDoneEvent | LLMStreamErrorEvent;
+
 export type FlowSummary = {
   name: string;
   fileName: string;
