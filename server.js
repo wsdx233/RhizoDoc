@@ -33,12 +33,16 @@ app.use(express.json({ limit: '20mb' }));
 app.use(express.static(PUBLIC_DIR));
 
 // 前端直接使用 node_modules 中的 ESM 版本，避免引入构建工具。
+// 使用 sendFile 的 root + 相对路径形式，避免 pnpm 的 node_modules/.pnpm 真实路径被当作 dotfile 拒绝。
+const MARKED_ROOT = path.dirname(require.resolve('marked/package.json'));
+const DOMPURIFY_DIST_DIR = path.dirname(require.resolve('dompurify'));
+
 app.get('/vendor/marked.esm.js', (_req, res) => {
-  res.sendFile(path.join(path.dirname(require.resolve('marked/package.json')), 'lib', 'marked.esm.js'));
+  res.sendFile('lib/marked.esm.js', { root: MARKED_ROOT });
 });
 
 app.get('/vendor/purify.es.mjs', (_req, res) => {
-  res.sendFile(path.join(path.dirname(require.resolve('dompurify')), 'purify.es.mjs'));
+  res.sendFile('purify.es.mjs', { root: DOMPURIFY_DIST_DIR });
 });
 
 app.use('/vendor/highlight', express.static(path.dirname(require.resolve('@highlightjs/cdn-assets/package.json'))));
