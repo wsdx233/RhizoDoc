@@ -16,6 +16,20 @@ export type RhizoDocConfig = {
   };
 };
 
+export type ApiConfigResponse = {
+  ok: true;
+  provider: string;
+  model: string;
+  modelName: string;
+  apiType: string;
+  reasoningEffort: string;
+  ready: boolean;
+  hasApiKey: boolean;
+  authStatus: unknown;
+  configSource: string;
+  error: string | null;
+};
+
 export type LLMMode = 'selection' | 'node' | 'canvas' | 'initial' | 'regenerate';
 
 export type LLMGeneratePayload = {
@@ -81,4 +95,33 @@ export type RhizoFlow = {
   edges: RhizoEdge[];
   annotations: RhizoAnnotation[];
   [key: string]: unknown;
+};
+
+export type LLMGenerateResponse = {
+  ok: true;
+  title: string;
+  content: string;
+  raw: string;
+  usage: unknown | null;
+  model: string;
+  apiType: string;
+  reasoningEffort: string;
+};
+
+export type FlowSummary = {
+  name: string;
+  fileName: string;
+  size: number;
+  updatedAt: string;
+};
+
+export type FlowListResponse = {
+  ok: true;
+  flows: FlowSummary[];
+};
+
+export type SaveFlowResponse = {
+  ok: true;
+  name: string;
+  fileName: string;
 };

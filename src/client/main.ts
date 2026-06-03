@@ -5,6 +5,7 @@ import katex from 'katex';
 import './styles.css';
 import { fetchJson, postJson } from './api.js';
 import { isFlowObject as isValidFlowShape, validateFlow } from '../shared/schemas.js';
+import type { ApiConfigResponse, FlowListResponse, LLMGenerateResponse, SaveFlowResponse } from '../shared/types.js';
 
 const markdownRenderer = new marked.Renderer();
 markdownRenderer.code = (code, infostring) => renderHighlightedCode(code, infostring);
@@ -272,7 +273,7 @@ function bindEvents() {
 
 async function loadAppConfig() {
   try {
-    const config = await fetchJson<any>('/api/config');
+    const config = await fetchJson<ApiConfigResponse>('/api/config');
     state.appConfig = config;
     if (config.ready || config.hasApiKey) {
       DOM.apiStatus.className = 'status-cluster ok';
@@ -367,7 +368,7 @@ async function generateInitialDocument() {
   });
   try {
     updateProgressCard(progressId, { stage: '请求模型', summary: '模型正在生成完整 Markdown 文档' });
-    const data = await postJson<any>('/api/llm/generate', { mode: 'initial', userPrompt: prompt });
+    const data = await postJson<LLMGenerateResponse>('/api/llm/generate', { mode: 'initial', userPrompt: prompt });
 
     const title = data.title || prompt.slice(0, 24) || 'AI 生成文档';
     createDocument(title, data.content || '（模型没有返回内容）', { force: true });
@@ -1762,7 +1763,7 @@ async function callLLMAndUpdate(nodeId, payload, { progressId = null } = {}) {
   ];
 
   try {
-    const data = await postJson<any>('/api/llm/generate', enrichedPayload);
+    const data = await postJson<LLMGenerateResponse>('/api/llm/generate', enrichedPayload);
     updateProgressCard(progressId, { stage: '解析响应', summary: '正在渲染生成节点' });
 
     node.title = data.title || 'AI 生成节点';
@@ -2344,7 +2345,7 @@ async function saveFlowToServer() {
   const name = prompt('请输入服务端保存名称：', state.flowName || '未命名流程图');
   if (!name) return;
   try {
-    const data = await postJson<any>('/api/flows', { name, flow: exportFlow() });
+    const data = await postJson<SaveFlowResponse>('/api/flows', { name, flow: exportFlow() });
     state.flowName = data.name || name;
     updateFlowName();
     showToast(`已保存到服务端：${state.flowName}`);
@@ -2365,7 +2366,7 @@ function closeServerFlowsModal() {
 async function refreshServerFlows() {
   DOM.serverFlowList.innerHTML = '<p class="muted">正在读取...</p>';
   try {
-    const data = await fetchJson<any>('/api/flows');
+    const data = await fetchJson<FlowListResponse>('/api/flows');
     const flows = data.flows || [];
     if (flows.length === 0) {
       DOM.serverFlowList.innerHTML = '<p class="muted">服务端还没有保存的流程图。</p>';
