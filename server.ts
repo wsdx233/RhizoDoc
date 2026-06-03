@@ -7,6 +7,7 @@ import { completeSimple } from '@earendil-works/pi-ai';
 import { AuthStorage, getAgentDir, ModelRegistry, SettingsManager } from '@earendil-works/pi-coding-agent';
 import { normalizeRhizoDocConfig } from './src/shared/config.js';
 import { normalizeFlowName as normalizeSafeFlowName, validateFlow, validateLLMPayload } from './src/shared/schemas.js';
+import { resolvePathInsideRoot } from './src/server/paths.js';
 import type { LLMGeneratePayload, RhizoDocConfig } from './src/shared/types.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -17,6 +18,7 @@ const cliOptions = parseCliOptions(process.argv.slice(2));
 const APP_CONFIG_PATH = cliOptions.config ? path.resolve(cliOptions.config) : path.resolve(__dirname, 'rhizodoc.config.json');
 const appConfig = await loadRhizoDocConfig(APP_CONFIG_PATH);
 const PORT = cliOptions.port ?? parsePort(appConfig.server.port, 3000);
+const HOST = cliOptions.host ?? appConfig.server.host ?? '127.0.0.1';
 const DIST_DIR = path.join(__dirname, 'dist');
 const HAS_CLIENT_BUILD = await directoryExists(DIST_DIR);
 const FLOWS_DIR = resolveProjectPath(appConfig.storage.flowsDir);
@@ -152,8 +154,8 @@ app.use((req, res, next) => {
   next();
 });
 
-app.listen(PORT, async () => {
-  console.log(`RhizoDoc 已启动: http://localhost:${PORT}`);
+app.listen(PORT, HOST, async () => {
+  console.log(`RhizoDoc 已启动: http://${HOST}:${PORT}`);
   console.log(`RhizoDoc config: ${appConfig.loaded ? APP_CONFIG_PATH : 'defaults (rhizodoc.config.json not found)'}`);
   console.log(`Pi agent dir: ${AGENT_DIR}`);
   const config = await getPiModelConfig();
@@ -357,16 +359,18 @@ function parseCliOptions(args: string[]) {
       help: { type: 'boolean', short: 'h' },
       port: { type: 'string', short: 'p' },
       config: { type: 'string' },
+      host: { type: 'string' },
     },
   });
 
   if (values.help) {
-    console.log('用法：pnpm start -- [--port 3003] [--config rhizodoc.config.json]');
+    console.log('用法：pnpm start -- [--host 127.0.0.1] [--port 3003] [--config rhizodoc.config.json]');
     process.exit(0);
   }
 
   return {
     port: values.port === undefined ? undefined : parsePort(values.port),
+    host: values.host,
     config: values.config,
   };
 }
@@ -422,8 +426,9 @@ function resolveProjectPath(value: string): string {
 
 function resolveFlowPath(name: unknown): string {
   const normalized = normalizeFlowName(name);
-  const filePath = path.resolve(FLOWS_DIR, `${normalized}.json`);
-  const flowsRoot = path.resolve(FLOWS_DIR);
-  if (!filePath.startsWith(flowsRoot)) throw new Error('非法流程图文件名');
-  return filePath;
+  try {
+    return resolvePathInsideRoot(FLOWS_DIR, `${normalized}.json`);
+  } catch {
+    throw new Error('非法流程图文件名');
+  }
 }

@@ -1,6 +1,7 @@
 {
   "$schema": "./src/shared/config.schema.json",
   "server": {
+    "host": "127.0.0.1",
     "port": 3003,
     "jsonLimit": "20mb"
   },

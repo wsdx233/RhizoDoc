@@ -88,6 +88,7 @@ RhizoDoc uses `rhizodoc.config.json` for app-specific settings. The file is inte
 {
   "$schema": "./src/shared/config.schema.json",
   "server": {
+    "host": "127.0.0.1",
     "port": 3000,
     "jsonLimit": "20mb"
   },
@@ -105,6 +106,7 @@ RhizoDoc uses `rhizodoc.config.json` for app-specific settings. The file is inte
 
 | Field | Default | Description |
 | --- | --- | --- |
+| `server.host` | `127.0.0.1` | Express bind address. Defaults to localhost for local-first safety; set to `0.0.0.0` only when you intentionally expose the app on your LAN. Can also be overridden by `--host`. |
 | `server.port` | `3000` | Express server port. Can also be overridden by `--port`. |
 | `server.jsonLimit` | `20mb` | JSON request body limit. |
 | `pi.provider` | Pi default provider | Optional project-only Pi provider override. Empty string means use Pi default. |
@@ -117,6 +119,7 @@ CLI options use Node's built-in `node:util.parseArgs`:
 
 ```bash
 pnpm start -- --port 3003
+pnpm start -- --host 0.0.0.0 --port 3003
 pnpm start -- --config ./my.rhizodoc.json
 ```
 

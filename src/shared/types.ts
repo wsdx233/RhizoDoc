@@ -1,6 +1,7 @@
 export type RhizoDocConfig = {
   loaded?: boolean;
   server: {
+    host: string;
     port: number;
     jsonLimit: string;
   };

@@ -3,6 +3,7 @@ import type { RhizoDocConfig } from './types.js';
 
 const defaultRhizoDocConfig: RhizoDocConfig = {
   server: {
+    host: '127.0.0.1',
     port: 3000,
     jsonLimit: '20mb',
   },
@@ -21,6 +22,7 @@ export const rhizoDocConfigSchema = z
   .object({
     server: z
       .object({
+        host: z.string().trim().min(1).default(defaultRhizoDocConfig.server.host),
         port: z.coerce.number().int().min(1).max(65535).default(defaultRhizoDocConfig.server.port),
         jsonLimit: z.string().min(1).default(defaultRhizoDocConfig.server.jsonLimit),
       })
