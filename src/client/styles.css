@@ -147,10 +147,13 @@ path.edge { fill: none; stroke: var(--md-sys-color-outline); stroke-width: 3px; 
   z-index: 30;
 }
 .node.dragging { z-index: 40; }
-body.move-mode .node { cursor: grab; }
-body.move-mode .node:active { cursor: grabbing; }
+body.move-mode .node,
+body.node-drag-mode .node { cursor: grab; }
+body.move-mode .node:active,
+body.node-drag-mode .node:active { cursor: grabbing; }
 body.multi-select-mode .node { cursor: crosshair; }
 body.move-mode .node-content, body.move-mode .node-content *,
+body.node-drag-mode .node-content-wrapper, body.node-drag-mode .node-content-wrapper *,
 body.multi-select-mode .node-content, body.multi-select-mode .node-content * {
   cursor: inherit; user-select: none; -webkit-user-select: none; -ms-user-select: none;
 }
@@ -424,8 +427,11 @@ mark.annotated:hover { filter: brightness(.96) saturate(1.08); }
 ::selection { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
 body.move-mode .node, body.move-mode .node * { cursor: grab !important; }
 body.move-mode .node:active, body.move-mode .node:active * { cursor: grabbing !important; }
+body.node-drag-mode .node-content-wrapper, body.node-drag-mode .node-content-wrapper * { cursor: grab !important; }
+body.node-drag-mode .node:active .node-content-wrapper, body.node-drag-mode .node:active .node-content-wrapper * { cursor: grabbing !important; }
 body.multi-select-mode .node, body.multi-select-mode .node * { cursor: crosshair !important; }
 body.move-mode .node-content, body.move-mode .node-content *,
+body.node-drag-mode .node-content-wrapper, body.node-drag-mode .node-content-wrapper *,
 body.multi-select-mode .node-content, body.multi-select-mode .node-content * {
   user-select: none !important; -webkit-user-select: none !important; -ms-user-select: none !important;
 }

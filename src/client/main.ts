@@ -26,6 +26,7 @@ const state: any = {
   canvas: { x: window.innerWidth / 2 - NODE_WIDTH / 2, y: 160, scale: 1 },
   isMoveMode: false,
   isMultiSelectMode: false,
+  isNodeDragMode: false,
   isDragging: false,
   dragStart: { x: 0, y: 0 },
   isDraggingNode: false,
@@ -245,6 +246,7 @@ function bindEvents() {
   window.addEventListener('blur', () => {
     state.isMoveMode = false;
     state.isMultiSelectMode = false;
+    state.isNodeDragMode = false;
     syncInteractionModeClasses();
   });
 }
@@ -570,7 +572,7 @@ function renderNode(node) {
   nodeEl.className = 'node';
   nodeEl.classList.toggle('selected', isNodeSelected(node.id));
   nodeEl.innerHTML = `
-    <div class="node-header" title="拖拽移动节点">
+    <div class="node-header" title="拖拽移动节点；按住 Shift 可从内容区拖动">
       <div class="node-title-group">
         <span class="material-symbols-outlined node-icon">description</span>
         <span class="node-title"></span>
@@ -792,6 +794,11 @@ function onNodesLayerMouseDown(event) {
 
   if ((event.target as Element).closest('.node-btn') || (event.target as Element).closest('.expand-btn')) return;
 
+  if (state.isNodeDragMode) {
+    startNodeDrag(event, nodeEl);
+    return;
+  }
+
   const header = (event.target as Element).closest('.node-header');
   if (!header) return;
   startNodeDrag(event, nodeEl);
@@ -965,6 +972,7 @@ function updateInteractionModes(event) {
     if (event.type === 'keyup') {
       if (event.code === 'Space' || event.key === ' ') state.isMoveMode = false;
       if (event.key === 'Control' || event.key === 'Meta' || (!event.ctrlKey && !event.metaKey)) state.isMultiSelectMode = false;
+      if (event.key === 'Shift' || !event.shiftKey) state.isNodeDragMode = Boolean(event.shiftKey);
       syncInteractionModeClasses();
     }
     return;
@@ -976,9 +984,11 @@ function updateInteractionModes(event) {
       event.preventDefault();
     }
     state.isMultiSelectMode = Boolean(event.ctrlKey || event.metaKey || event.key === 'Control' || event.key === 'Meta');
+    state.isNodeDragMode = Boolean(event.shiftKey || event.key === 'Shift');
   } else if (event.type === 'keyup') {
     if (event.code === 'Space' || event.key === ' ') state.isMoveMode = false;
     state.isMultiSelectMode = Boolean(event.ctrlKey || event.metaKey);
+    state.isNodeDragMode = Boolean(event.shiftKey);
   }
   syncInteractionModeClasses();
 }
@@ -986,6 +996,7 @@ function updateInteractionModes(event) {
 function syncModifierModesFromPointerEvent(event) {
   if (isEditableTarget(event.target)) return;
   state.isMultiSelectMode = Boolean(event.ctrlKey || event.metaKey);
+  state.isNodeDragMode = Boolean(event.shiftKey);
   syncInteractionModeClasses();
 }
 
@@ -994,6 +1005,8 @@ function syncInteractionModeClasses() {
   document.body.classList.toggle('multi-select-mode', state.isMultiSelectMode);
   DOM.viewport.classList.toggle('move-mode', state.isMoveMode);
   DOM.viewport.classList.toggle('multi-select-mode', state.isMultiSelectMode);
+  document.body.classList.toggle('node-drag-mode', state.isNodeDragMode);
+  DOM.viewport.classList.toggle('node-drag-mode', state.isNodeDragMode);
 }
 
 function isEditableTarget(target) {
