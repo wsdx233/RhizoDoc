@@ -144,6 +144,7 @@ function bindEvents() {
     }, 0);
   }, true);
   DOM.viewport.addEventListener('wheel', onViewportWheel, { passive: false });
+  DOM.nodesLayer.addEventListener('scroll', () => drawEdges(), true);
   window.addEventListener('resize', () => {
     drawEdges();
     updateMinimap();
@@ -1798,41 +1799,147 @@ function drawEdges() {
   DOM.edgesLayer.appendChild(defs);
 
   for (const edge of state.edges) {
-    const sourceEl = document.getElementById(edge.sourceId);
-    const targetEl = document.getElementById(edge.targetId);
+    const sourceEl = document.getElementById(edge.sourceId) as HTMLElement | null;
+    const targetEl = document.getElementById(edge.targetId) as HTMLElement | null;
     const target = getNode(edge.targetId);
     if (!sourceEl || !targetEl) continue;
 
-    const sRect = {
-      x: (parseFloat(sourceEl.style.left) || 0) + EDGE_SVG_OFFSET,
-      y: (parseFloat(sourceEl.style.top) || 0) + EDGE_SVG_OFFSET,
-      w: sourceEl.offsetWidth,
-      h: sourceEl.offsetHeight,
-    };
-    const tRect = {
-      x: (parseFloat(targetEl.style.left) || 0) + EDGE_SVG_OFFSET,
-      y: (parseFloat(targetEl.style.top) || 0) + EDGE_SVG_OFFSET,
-      w: targetEl.offsetWidth,
-      h: targetEl.offsetHeight,
-    };
+    const sourceRect = getElementSvgRect(sourceEl);
+    const targetRect = getElementSvgRect(targetEl);
+    if (!sourceRect || !targetRect) continue;
 
-    const targetOnRight = tRect.x + tRect.w / 2 >= sRect.x + sRect.w / 2;
-    const sourceAnchorY = sRect.y + Math.min(72, Math.max(36, sRect.h * 0.22));
-    const targetAnchorY = tRect.y + Math.min(72, Math.max(36, tRect.h * 0.22));
-    const sX = targetOnRight ? sRect.x + sRect.w : sRect.x;
-    const tX = targetOnRight ? tRect.x : tRect.x + tRect.w;
-    const distance = Math.max(70, Math.abs(tX - sX) * 0.48);
-    const cp1X = targetOnRight ? sX + distance : sX - distance;
-    const cp2X = targetOnRight ? tX - distance : tX + distance;
+    const targetOnRight = targetRect.x + targetRect.w / 2 >= sourceRect.x + sourceRect.w / 2;
+    const sourceSide = targetOnRight ? 'right' : 'left';
+    const targetSide = targetOnRight ? 'left' : 'right';
+    const sourceAnchor = resolveEdgeSourceAnchor(edge, sourceEl, sourceRect, targetRect, sourceSide);
+    const targetAnchor = resolveNodeSideAnchor(targetRect, targetSide, sourceAnchor.precise ? sourceAnchor.y : null);
+    const distance = Math.max(70, Math.abs(targetAnchor.x - sourceAnchor.x) * 0.48);
+    const cp1X = targetOnRight ? sourceAnchor.x + distance : sourceAnchor.x - distance;
+    const cp2X = targetOnRight ? targetAnchor.x - distance : targetAnchor.x + distance;
 
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('d', `M ${sX} ${sourceAnchorY} C ${cp1X} ${sourceAnchorY}, ${cp2X} ${targetAnchorY}, ${tX} ${targetAnchorY}`);
-    path.setAttribute('class', 'edge');
+    path.setAttribute('d', `M ${sourceAnchor.x} ${sourceAnchor.y} C ${cp1X} ${sourceAnchor.y}, ${cp2X} ${targetAnchor.y}, ${targetAnchor.x} ${targetAnchor.y}`);
+    path.setAttribute('class', sourceAnchor.precise ? 'edge edge-from-annotation' : 'edge');
     const markerId = target?.colorIndex >= 0 ? `arrow-${target.colorIndex % 5}` : 'arrow-default';
     path.setAttribute('marker-end', `url(#${markerId})`);
     path.style.stroke = target?.colorIndex >= 0 ? `var(--hl-${target.colorIndex % 5}-fg)` : 'var(--md-sys-color-outline)';
     DOM.edgesLayer.appendChild(path);
   }
+}
+
+function resolveEdgeSourceAnchor(edge, sourceEl, sourceRect, targetRect, sourceSide) {
+  const annotation = findEdgeAnnotation(edge);
+  const annotationAnchor = annotation ? resolveAnnotationAnchor(annotation, sourceEl, targetRect, sourceSide) : null;
+  return annotationAnchor || resolveNodeSideAnchor(sourceRect, sourceSide);
+}
+
+function findEdgeAnnotation(edge) {
+  return state.annotations.find((annotation) => annotation.sourceNodeId === edge.sourceId && annotation.targetNodeId === edge.targetId) || null;
+}
+
+function resolveNodeSideAnchor(rect, side, preferredY = null) {
+  const defaultY = rect.y + Math.min(72, Math.max(36, rect.h * 0.22));
+  const margin = Math.min(72, Math.max(28, rect.h * 0.18));
+  const y = Number.isFinite(preferredY)
+    ? clamp(Number(preferredY), rect.y + margin, rect.y + rect.h - margin)
+    : defaultY;
+  return {
+    x: side === 'right' ? rect.x + rect.w : rect.x,
+    y,
+    precise: false,
+  };
+}
+
+function resolveAnnotationAnchor(annotation, sourceEl, targetRect, sourceSide) {
+  const contentEl = sourceEl.querySelector('.node-content') as HTMLElement | null;
+  if (!contentEl) return null;
+
+  const selector = `[data-annotation-id="${cssAttr(annotation.id)}"]`;
+  const annotatedElements = Array.from(contentEl.querySelectorAll(selector)) as HTMLElement[];
+  if (annotatedElements.length === 0) return null;
+
+  const targetCenterY = targetRect.y + targetRect.h / 2;
+  const candidates = annotatedElements.flatMap((element) => getVisibleAnnotationRects(element, contentEl))
+    .map((rect) => ({
+      rect,
+      distance: Math.abs(rect.y + rect.h / 2 - targetCenterY),
+      area: rect.w * rect.h,
+    }))
+    .filter((candidate) => candidate.rect.w >= 1 && candidate.rect.h >= 1);
+
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => a.distance - b.distance || b.area - a.area);
+  const best = candidates[0].rect;
+  return {
+    x: sourceSide === 'right' ? best.x + best.w : best.x,
+    y: best.y + best.h / 2,
+    precise: true,
+  };
+}
+
+function getVisibleAnnotationRects(element, contentEl) {
+  const rects = Array.from(element.getClientRects());
+  return rects
+    .map((rect) => getVisibleClientRect(element, contentEl, rect))
+    .filter(Boolean)
+    .map(clientRectToSvgRect)
+    .filter(Boolean);
+}
+
+function getVisibleClientRect(element, contentEl, rawRect) {
+  let visibleRect = normalizeClientRect(rawRect);
+  let ancestor = element.parentElement;
+
+  while (ancestor && ancestor !== document.body) {
+    if (ancestor === contentEl || clipsOverflow(ancestor)) {
+      visibleRect = intersectClientRects(visibleRect, normalizeClientRect(ancestor.getBoundingClientRect()));
+      if (!visibleRect) return null;
+    }
+    if (ancestor === contentEl) break;
+    ancestor = ancestor.parentElement;
+  }
+
+  return visibleRect;
+}
+
+function clipsOverflow(element) {
+  const style = window.getComputedStyle(element);
+  return [style.overflow, style.overflowX, style.overflowY].some((value) => ['auto', 'scroll', 'hidden', 'clip'].includes(value));
+}
+
+function normalizeClientRect(rect) {
+  return {
+    left: rect.left,
+    top: rect.top,
+    right: rect.right,
+    bottom: rect.bottom,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
+function intersectClientRects(a, b) {
+  const left = Math.max(a.left, b.left);
+  const top = Math.max(a.top, b.top);
+  const right = Math.min(a.right, b.right);
+  const bottom = Math.min(a.bottom, b.bottom);
+  if (right <= left || bottom <= top) return null;
+  return { left, top, right, bottom, width: right - left, height: bottom - top };
+}
+
+function getElementSvgRect(element) {
+  return clientRectToSvgRect(element.getBoundingClientRect());
+}
+
+function clientRectToSvgRect(rect) {
+  const scale = state.canvas.scale || 1;
+  if (!rect || !Number.isFinite(scale) || scale <= 0 || rect.width <= 0 || rect.height <= 0) return null;
+  return {
+    x: (rect.left - state.canvas.x) / scale + EDGE_SVG_OFFSET,
+    y: (rect.top - state.canvas.y) / scale + EDGE_SVG_OFFSET,
+    w: rect.width / scale,
+    h: rect.height / scale,
+  };
 }
 
 function refreshNodeDirections() {
