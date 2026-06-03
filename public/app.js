@@ -1,6 +1,11 @@
 import { marked } from '/vendor/marked.esm.js';
 import DOMPurify from '/vendor/purify.es.mjs';
+import hljs from '/vendor/highlight/es/highlight.min.js';
+import katex from '/vendor/katex/dist/katex.mjs';
 
+const markdownRenderer = new marked.Renderer();
+markdownRenderer.code = (code, infostring) => renderHighlightedCode(code, infostring);
+marked.use({ renderer: markdownRenderer, extensions: createMathExtensions() });
 marked.setOptions({ gfm: true, breaks: true });
 
 const NODE_WIDTH = 340;
@@ -209,8 +214,8 @@ function bindEvents() {
     if (event.target === DOM.fullscreenOverlay) closeFullscreen();
   });
   DOM.fsContent.addEventListener('click', (event) => {
-    const mark = event.target.closest('mark.annotated');
-    const targetId = mark?.dataset.refId;
+    const annotated = event.target.closest('mark.annotated, .math-node.annotated-math');
+    const targetId = annotated?.dataset.refId;
     if (targetId) focusNode(targetId);
   });
 
@@ -558,14 +563,178 @@ function toggleNodeCollapse(id) {
   }, 180);
 }
 
+function renderHighlightedCode(code, infostring = '') {
+  const source = String(code ?? '').replace(/\n$/, '');
+  const language = normalizeHighlightLanguage(infostring);
+  let highlighted = '';
+  let detectedLanguage = language;
+
+  try {
+    if (language) {
+      highlighted = hljs.highlight(source, { language, ignoreIllegals: true }).value;
+    } else if (source.trim() && source.length <= 20000) {
+      const result = hljs.highlightAuto(source);
+      highlighted = result.value;
+      detectedLanguage = result.language || '';
+    }
+  } catch (error) {
+    console.warn('[Markdown] 代码高亮失败:', error);
+  }
+
+  if (!highlighted) highlighted = escapeHtml(source);
+  const languageClass = detectedLanguage ? ` language-${cssClassIdent(detectedLanguage)}` : '';
+  const languageAttr = detectedLanguage ? ` data-language="${escapeHtml(detectedLanguage)}"` : '';
+  return `<pre class="code-block"><code class="hljs${languageClass}"${languageAttr}>${highlighted}\n</code></pre>\n`;
+}
+
+function normalizeHighlightLanguage(infostring = '') {
+  const raw = String(infostring || '').trim().match(/^\S+/)?.[0] || '';
+  const value = raw.toLowerCase().replace(/^language-/, '');
+  if (!value) return '';
+
+  const aliases = {
+    js: 'javascript',
+    jsx: 'javascript',
+    mjs: 'javascript',
+    cjs: 'javascript',
+    ts: 'typescript',
+    tsx: 'typescript',
+    py: 'python',
+    rb: 'ruby',
+    sh: 'bash',
+    shell: 'bash',
+    zsh: 'bash',
+    ps1: 'powershell',
+    pwsh: 'powershell',
+    yml: 'yaml',
+    md: 'markdown',
+    'c++': 'cpp',
+    'c#': 'csharp',
+    cs: 'csharp',
+    'objective-c': 'objectivec',
+    objc: 'objectivec',
+    html: 'xml',
+    svg: 'xml',
+    vue: 'xml',
+  };
+
+  const candidates = [aliases[value] || value, value.replace(/[^a-z0-9_+#-]/g, '')];
+  for (const candidate of candidates) {
+    if (candidate && hljs.getLanguage(candidate)) return candidate;
+  }
+  return '';
+}
+
+function createMathExtensions() {
+  return [
+    {
+      name: 'mathBlock',
+      level: 'block',
+      start(src) {
+        const match = src.match(/(?:^|\n) {0,3}(?:\$\$|\\\[)/);
+        return match ? match.index : undefined;
+      },
+      tokenizer: tokenizeMathBlock,
+      renderer(token) {
+        return renderKatex(token.text, true);
+      },
+    },
+    {
+      name: 'mathInline',
+      level: 'inline',
+      start(src) {
+        const dollar = src.indexOf('$');
+        const paren = src.indexOf('\\(');
+        if (dollar < 0) return paren >= 0 ? paren : undefined;
+        if (paren < 0) return dollar;
+        return Math.min(dollar, paren);
+      },
+      tokenizer: tokenizeMathInline,
+      renderer(token) {
+        return renderKatex(token.text, false);
+      },
+    },
+  ];
+}
+
+function tokenizeMathBlock(src) {
+  const rules = [
+    /^ {0,3}\$\$[ \t]*\n([\s\S]+?)\n {0,3}\$\$[ \t]*(?:\n+|$)/,
+    /^ {0,3}\$\$[ \t]*(.+?)[ \t]*\$\$[ \t]*(?:\n+|$)/,
+    /^ {0,3}\\\[[ \t]*\n?([\s\S]+?)\n? {0,3}\\\][ \t]*(?:\n+|$)/,
+  ];
+
+  for (const rule of rules) {
+    const match = rule.exec(src);
+    if (match) {
+      return {
+        type: 'mathBlock',
+        raw: match[0],
+        text: (match[1] || '').trim(),
+      };
+    }
+  }
+  return undefined;
+}
+
+function tokenizeMathInline(src) {
+  const parenMatch = /^\\\(([\s\S]+?)\\\)/.exec(src);
+  if (parenMatch && isValidInlineMath(parenMatch[1])) {
+    return {
+      type: 'mathInline',
+      raw: parenMatch[0],
+      text: parenMatch[1].trim(),
+    };
+  }
+
+  const dollarMatch = /^\$(?!\$)((?:\\[\s\S]|[^\n\\$])+?)\$(?!\$)/.exec(src);
+  if (dollarMatch && isValidInlineMath(dollarMatch[1], { strictSpacing: true })) {
+    return {
+      type: 'mathInline',
+      raw: dollarMatch[0],
+      text: dollarMatch[1].trim(),
+    };
+  }
+  return undefined;
+}
+
+function isValidInlineMath(text, { strictSpacing = false } = {}) {
+  const value = String(text || '');
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  return !strictSpacing || trimmed === value;
+}
+
+function renderKatex(source, displayMode) {
+  const text = String(source || '').trim();
+  if (!text) return '';
+
+  const tag = displayMode ? 'div' : 'span';
+  const className = displayMode ? 'math-node math-block' : 'math-node math-inline';
+  const sourceAttr = escapeHtml(text);
+
+  try {
+    const html = katex.renderToString(text, {
+      displayMode,
+      output: 'html',
+      throwOnError: false,
+      strict: 'ignore',
+      trust: false,
+    });
+    return `<${tag} class="${className}" data-math-source="${sourceAttr}" data-math-display="${displayMode ? 'true' : 'false'}">${html}</${tag}>`;
+  } catch (error) {
+    return `<${tag} class="${className} math-error" data-math-source="${sourceAttr}" data-math-display="${displayMode ? 'true' : 'false'}" title="${escapeHtml(error.message || 'LaTeX 渲染失败')}">${escapeHtml(text)}</${tag}>`;
+  }
+}
+
 function renderMarkdown(markdown) {
   try {
     const html = marked.parse(markdown || '');
     return DOMPurify.sanitize(html, {
-      ADD_ATTR: ['target', 'rel'],
+      ADD_ATTR: ['target', 'rel', 'data-language', 'data-math-source', 'data-math-display'],
     });
   } catch (error) {
-    return `<pre><code>${escapeHtml(markdown || '')}</code></pre>`;
+    return `<pre class="code-block"><code>${escapeHtml(markdown || '')}</code></pre>`;
   }
 }
 
@@ -573,6 +742,9 @@ function postProcessNodeContent(contentEl) {
   contentEl.querySelectorAll('a[href]').forEach((link) => {
     link.setAttribute('target', '_blank');
     link.setAttribute('rel', 'noopener noreferrer');
+  });
+  contentEl.querySelectorAll('pre code.hljs').forEach((code) => {
+    code.closest('pre')?.classList.add('code-block');
   });
 }
 
@@ -648,9 +820,9 @@ function onNodesLayerClick(event) {
     return;
   }
 
-  const mark = event.target.closest('mark.annotated');
-  if (!mark) return;
-  const targetId = mark.dataset.refId;
+  const annotated = event.target.closest('mark.annotated, .math-node.annotated-math');
+  if (!annotated) return;
+  const targetId = annotated.dataset.refId;
   if (targetId) focusNode(targetId);
 }
 
@@ -750,17 +922,14 @@ function handleSelection() {
   const parentNodeId = fsSourceId || nodeEl?.id;
   if (!parentNodeId || !getNode(parentNodeId)) return;
 
-  const offsets = getRangeOffsets(contentEl, range);
-  if (!offsets || offsets.length <= 0) return;
-
-  const normalized = normalizeSelectionText(rawText);
-  if (!normalized.text) return;
+  const logicalSelection = getLogicalRangeSelection(contentEl, range, rawText);
+  if (!logicalSelection || logicalSelection.length <= 0) return;
 
   state.currentSelection = {
-    text: normalized.text,
+    text: logicalSelection.text,
     parentNodeId,
-    start: offsets.start + normalized.leading,
-    length: normalized.text.length,
+    start: logicalSelection.start,
+    length: logicalSelection.length,
     source: fsSourceId ? 'fullscreen' : 'node',
   };
 
@@ -800,23 +969,13 @@ function retainTemporarySelection() {
 }
 
 function wrapTemporarySelectionByOffset(container, start, length) {
-  if (!Number.isFinite(start) || !Number.isFinite(length) || length <= 0) return;
-  const end = start + length;
-  let cursor = 0;
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-  const textNodes = [];
-  while (walker.nextNode()) textNodes.push(walker.currentNode);
-
-  for (const textNode of textNodes) {
-    const value = textNode.nodeValue || '';
-    const nodeStart = cursor;
-    const nodeEnd = cursor + value.length;
-    cursor = nodeEnd;
-    if (nodeEnd <= start || nodeStart >= end) continue;
-    const from = Math.max(0, start - nodeStart);
-    const to = Math.min(value.length, end - nodeStart);
-    if (from < to) wrapTemporaryTextNodeSegment(textNode, from, to);
-  }
+  forEachLogicalTextSegment(container, start, length, (unit, from, to) => {
+    if (unit.type === 'math') {
+      unit.element.classList.add('retained-math-selection');
+      return;
+    }
+    if (from < to) wrapTemporaryTextNodeSegment(unit.node, from, to);
+  });
 }
 
 function wrapTemporaryTextNodeSegment(textNode, from, to) {
@@ -851,6 +1010,9 @@ function clearTemporarySelection() {
     parent.removeChild(span);
     parent.normalize();
   });
+  document.querySelectorAll('.math-node.retained-math-selection').forEach((mathEl) => {
+    mathEl.classList.remove('retained-math-selection');
+  });
 }
 
 function normalizeSelectionText(rawText) {
@@ -861,7 +1023,59 @@ function normalizeSelectionText(rawText) {
   return { text: trimmed, leading, trailing };
 }
 
-function getRangeOffsets(container, range) {
+function getLogicalRangeSelection(container, range, rawText = '') {
+  const units = getLogicalTextUnits(container);
+  let selectionStart = null;
+  let logicalText = '';
+
+  for (const unit of units) {
+    const segment = getSelectedUnitSegment(unit, range);
+    if (!segment || segment.to <= segment.from) continue;
+    const segmentText = unit.text.slice(segment.from, segment.to);
+    if (!segmentText) continue;
+    if (selectionStart === null) selectionStart = unit.start + segment.from;
+    logicalText += segmentText;
+  }
+
+  if (selectionStart !== null && logicalText.trim()) {
+    const normalized = normalizeSelectionText(logicalText);
+    if (normalized.text) {
+      return {
+        text: normalized.text,
+        start: selectionStart + normalized.leading,
+        length: normalized.text.length,
+      };
+    }
+  }
+
+  const offsets = getDomRangeOffsets(container, range);
+  if (!offsets || offsets.length <= 0) return null;
+  const normalized = normalizeSelectionText(rawText);
+  if (!normalized.text) return null;
+  return {
+    text: normalized.text,
+    start: offsets.start + normalized.leading,
+    length: normalized.text.length,
+  };
+}
+
+function getSelectedUnitSegment(unit, range) {
+  const target = unit.type === 'math' ? unit.element : unit.node;
+  if (!rangeIntersectsNode(range, target)) return null;
+
+  if (unit.type === 'math') {
+    return { from: 0, to: unit.text.length };
+  }
+
+  const value = unit.text || '';
+  let from = 0;
+  let to = value.length;
+  if (range.startContainer === unit.node) from = clamp(range.startOffset, 0, value.length);
+  if (range.endContainer === unit.node) to = clamp(range.endOffset, 0, value.length);
+  return from < to ? { from, to } : null;
+}
+
+function getDomRangeOffsets(container, range) {
   try {
     const before = document.createRange();
     before.selectNodeContents(container);
@@ -870,6 +1084,63 @@ function getRangeOffsets(container, range) {
     return { start, length: range.toString().length };
   } catch {
     return null;
+  }
+}
+
+function getLogicalText(container) {
+  return getLogicalTextUnits(container).map((unit) => unit.text).join('');
+}
+
+function getLogicalTextUnits(container) {
+  const units = [];
+  let cursor = 0;
+
+  const addUnit = (unit) => {
+    const text = String(unit.text || '');
+    units.push({ ...unit, text, start: cursor, end: cursor + text.length });
+    cursor += text.length;
+  };
+
+  const visit = (node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      addUnit({ type: 'text', node, text: node.nodeValue || '' });
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+
+    const element = node;
+    if (element.classList?.contains('math-node')) {
+      addUnit({ type: 'math', element, text: getMathLogicalText(element) });
+      return;
+    }
+
+    Array.from(element.childNodes).forEach(visit);
+  };
+
+  visit(container);
+  return units;
+}
+
+function getMathLogicalText(element) {
+  return element.dataset.mathSource || element.getAttribute('data-math-source') || element.textContent || '';
+}
+
+function forEachLogicalTextSegment(container, start, length, callback) {
+  if (!Number.isFinite(start) || !Number.isFinite(length) || length <= 0) return;
+  const end = start + length;
+  for (const unit of getLogicalTextUnits(container)) {
+    if (unit.end <= start || unit.start >= end) continue;
+    const from = Math.max(0, start - unit.start);
+    const to = Math.min(unit.text.length, end - unit.start);
+    if (from < to) callback(unit, from, to);
+  }
+}
+
+function rangeIntersectsNode(range, node) {
+  try {
+    return range.intersectsNode(node);
+  } catch {
+    return false;
   }
 }
 
@@ -1347,9 +1618,9 @@ function applyAnnotation(annotation) {
 
 function applyAnnotationToContainer(container, annotation) {
   if (!container) return;
-  if (container.querySelector(`mark[data-annotation-id="${cssAttr(annotation.id)}"]`)) return;
+  if (container.querySelector(`[data-annotation-id="${cssAttr(annotation.id)}"]`)) return;
 
-  const totalText = container.textContent || '';
+  const totalText = getLogicalText(container);
   let start = Number(annotation.start);
   let length = Number(annotation.length);
   const storedText = annotation.text || '';
@@ -1365,24 +1636,13 @@ function applyAnnotationToContainer(container, annotation) {
 }
 
 function wrapTextByOffset(container, start, length, annotation) {
-  const end = start + length;
-  let cursor = 0;
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-  const textNodes = [];
-  while (walker.nextNode()) textNodes.push(walker.currentNode);
-
-  for (const textNode of textNodes) {
-    const value = textNode.nodeValue || '';
-    const nodeStart = cursor;
-    const nodeEnd = cursor + value.length;
-    cursor = nodeEnd;
-
-    if (nodeEnd <= start || nodeStart >= end) continue;
-    const from = Math.max(0, start - nodeStart);
-    const to = Math.min(value.length, end - nodeStart);
-    if (from >= to) continue;
-    wrapTextNodeSegment(textNode, from, to, annotation);
-  }
+  forEachLogicalTextSegment(container, start, length, (unit, from, to) => {
+    if (unit.type === 'math') {
+      annotateMathElement(unit.element, annotation);
+      return;
+    }
+    if (from < to) wrapTextNodeSegment(unit.node, from, to, annotation);
+  });
 }
 
 function wrapTextNodeSegment(textNode, from, to, annotation) {
@@ -1405,6 +1665,17 @@ function wrapTextNodeSegment(textNode, from, to, annotation) {
   textNode.parentNode?.replaceChild(fragment, textNode);
 }
 
+function annotateMathElement(element, annotation) {
+  if (!element) return;
+  const colors = highlightColors(annotation.colorIndex);
+  element.classList.add('annotated-math');
+  element.dataset.refId = annotation.targetNodeId;
+  element.dataset.annotationId = annotation.id;
+  element.style.backgroundColor = colors.bg;
+  element.style.color = colors.fg;
+  element.title = '点击定位到生成节点';
+}
+
 function unwrapMarksForTarget(targetId) {
   document.querySelectorAll('mark.annotated').forEach((mark) => {
     if (mark.dataset.refId !== targetId) return;
@@ -1413,6 +1684,15 @@ function unwrapMarksForTarget(targetId) {
     while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
     parent.removeChild(mark);
     parent.normalize();
+  });
+  document.querySelectorAll('.math-node.annotated-math').forEach((mathEl) => {
+    if (mathEl.dataset.refId !== targetId) return;
+    mathEl.classList.remove('annotated-math');
+    delete mathEl.dataset.refId;
+    delete mathEl.dataset.annotationId;
+    mathEl.style.backgroundColor = '';
+    mathEl.style.color = '';
+    mathEl.title = '';
   });
 }
 
@@ -1824,6 +2104,10 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char]));
 }
 
+function cssClassIdent(value) {
+  return String(value || '').replace(/[^A-Za-z0-9_-]/g, '-');
+}
+
 function cssAttr(value) {
   return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
@@ -1921,8 +2205,22 @@ function demoDocument() {
 1. **选中一段文字**，在浮层中输入要求，然后让 LLM 生成解释节点。
 2. **右键任何节点**，选择“LLM 生成新节点”，根据整张卡片继续扩展。
 3. **右键空白画布**，也可以让 LLM 在当前位置创建一个独立新节点。
-4. 节点内容会按 Markdown 渲染，包括列表、表格、代码块和引用。
+4. 节点内容会按 Markdown 渲染，包括列表、表格、代码块高亮、LaTeX 公式和引用。
 5. 顶部按钮支持保存 / 加载流程图 JSON，也支持保存到 Node 服务端。
+
+## Markdown 增强示例
+
+- 行内公式：$E=mc^2$
+- 块级公式：
+
+$$
+\\int_0^1 x^2\\,dx = \\frac{1}{3}
+$$
+
+~~~js
+const answer = [1, 2, 3].map((n) => n ** 2);
+console.log(answer);
+~~~
 
 > 后端支持 OpenAI Responses / Chat Completions API。默认 base URL 为 \`https://api.openai.com/v1\`，也可以在项目根目录的 \`.env\` 中配置兼容 OpenAI 的服务、模型名称和 reasoning effort。
 

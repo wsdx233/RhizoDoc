@@ -41,6 +41,9 @@ app.get('/vendor/purify.es.mjs', (_req, res) => {
   res.sendFile(path.join(path.dirname(require.resolve('dompurify')), 'purify.es.mjs'));
 });
 
+app.use('/vendor/highlight', express.static(path.dirname(require.resolve('@highlightjs/cdn-assets/package.json'))));
+app.use('/vendor/katex', express.static(path.dirname(require.resolve('katex/package.json'))));
+
 app.get('/api/config', (_req, res) => {
   res.json({
     ok: true,
@@ -196,7 +199,7 @@ function buildInstructions() {
     '你是一个严谨的中文知识图谱/文档研究助手。',
     '你的任务是为无限画布 DAG 生成一个新的节点（也可以是第一张根文档节点）。',
     '必须输出 JSON：{"title":"短标题","content":"Markdown 正文"}，不要输出 JSON 之外的任何文字。',
-    'content 必须是高质量 Markdown，可使用二级/三级标题、要点列表、引用、表格、代码块。',
+    'content 必须是高质量 Markdown，可使用二级/三级标题、要点列表、引用、表格、代码块和 LaTeX 公式。',
     '除非用户明确要求，不要大段复述原文；应基于原文进行解释、扩展、拆解、追问或生成下一步。',
     '如果上下文不足，请明确说明你的假设，并给出可执行的下一步。',
   ].join('\n');

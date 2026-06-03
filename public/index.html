@@ -9,6 +9,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
+  <link rel="stylesheet" href="/vendor/highlight/styles/github-dark.min.css" />
+  <link rel="stylesheet" href="/vendor/katex/dist/katex.min.css" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
@@ -137,7 +139,7 @@
 
 选中任意文字，会出现“批注并生成”输入框；也可以右键节点，使用 LLM 生成新节点。
 
-- 节点内容支持 Markdown 渲染
+- 节点内容支持 Markdown、代码高亮和 LaTeX 公式渲染
 - 支持保存 / 加载完整流程图
 - 支持通过 .env 配置 OpenAI Responses / Chat Completions API
 - RhizoDoc 会把复杂资料组织成可追溯的知识节点网络</textarea></label>

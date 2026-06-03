@@ -7,7 +7,7 @@ RhizoDoc is a local-first AI document workspace that turns long documents, notes
 ## Features
 
 - **Infinite document canvas**: drag, zoom, fit-to-screen, and navigate a graph of Markdown nodes.
-- **Markdown rendering**: node content is rendered with `marked` and sanitized with `DOMPurify`.
+- **Markdown rendering**: node content is rendered with `marked` and sanitized with `DOMPurify`, with syntax highlighting powered by Highlight.js and LaTeX formula rendering powered by KaTeX.
 - **AI-assisted expansion**:
   - generate the first/root document from a prompt;
   - select text and generate linked child nodes;
@@ -25,6 +25,7 @@ RhizoDoc is a local-first AI document workspace that turns long documents, notes
 - Express 5
 - OpenAI Node SDK
 - marked + DOMPurify
+- Highlight.js + KaTeX
 - Vanilla HTML/CSS/JavaScript
 
 ## Quick Start
