@@ -595,18 +595,17 @@ function updateNodeElement(id, { contentHtml = null, preserveContent = false } =
   nodeEl.querySelector('.node-title').textContent = node.title || '未命名节点';
 
   const contentEl = nodeEl.querySelector('.node-content') as HTMLElement;
-  nodeEl.classList.remove('collapsible', 'collapsed', 'expanded');
   if (!preserveContent) {
     contentEl.innerHTML = contentHtml ?? renderMarkdown(node.content || '');
     postProcessNodeContent(contentEl);
     applyAnnotationsForSourceNode(node.id);
   }
+  updateNodeCollapseState(node.id);
 
   nodeEl.querySelector('.node-kind').textContent = node.llm ? 'AI / Markdown' : '文档 / Markdown';
   nodeEl.querySelector('.node-count').textContent = `${(node.content || '').length} 字`;
 
   requestAnimationFrame(() => {
-    updateNodeCollapseState(node.id);
     if (state.fullscreenNodeId === node.id) syncFullscreenContent(node.id);
     drawEdges();
     updateMinimap();
