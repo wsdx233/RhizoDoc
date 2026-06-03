@@ -61,10 +61,12 @@ export function validateFlow(flow: unknown, { requireEdges = true }: { requireEd
 
   const nodeIds = new Set<string>();
   const nodes = flow.nodes.map((node, index) => validateNode(node, index, nodeIds));
-  const edges = (Array.isArray(flow.edges) ? flow.edges : []).map(validateEdge).filter((edge) => edge.sourceId && edge.targetId);
+  const edges = validateGraphEdges(Array.isArray(flow.edges) ? flow.edges : [], nodeIds);
+  assertAcyclicGraph(nodeIds, edges);
   const annotations = (Array.isArray(flow.annotations) ? flow.annotations : [])
     .map(validateAnnotation)
-    .filter((annotation) => annotation.sourceNodeId && annotation.targetNodeId);
+    .filter((annotation) => annotation.sourceNodeId && annotation.targetNodeId)
+    .filter((annotation) => nodeIds.has(annotation.sourceNodeId) && nodeIds.has(annotation.targetNodeId));
 
   return {
     ...flow,
@@ -83,8 +85,8 @@ export function validateFlow(flow: unknown, { requireEdges = true }: { requireEd
 export function validateNode(raw: unknown, index = 0, seenIds = new Set<string>()): RhizoNode {
   if (!isPlainObject(raw)) throw new Error(`节点 ${index + 1} 不是对象。`);
   const fallbackId = `node-${Date.now()}-${index}`;
-  let id = cleanString(raw.id || fallbackId).trim() || fallbackId;
-  if (seenIds.has(id)) id = `${id}-${index}`;
+  const id = cleanString(raw.id || fallbackId).trim() || fallbackId;
+  if (seenIds.has(id)) throw new Error(`节点 ${index + 1} 的 id 重复：${id}`);
   seenIds.add(id);
   const width = clampNumber(raw.width, 280, 820, 340);
   return {
@@ -113,6 +115,46 @@ export function validateEdge(raw: unknown): RhizoEdge {
     sourceId: cleanString(raw.sourceId),
     targetId: cleanString(raw.targetId),
   } as RhizoEdge;
+}
+
+function validateGraphEdges(rawEdges: unknown[], nodeIds: Set<string>): RhizoEdge[] {
+  const edges: RhizoEdge[] = [];
+  const seenEdges = new Set<string>();
+
+  rawEdges.forEach((rawEdge, index) => {
+    const edge = validateEdge(rawEdge);
+    if (!edge.sourceId || !edge.targetId) throw new Error(`边 ${index + 1} 缺少 sourceId 或 targetId。`);
+    if (!nodeIds.has(edge.sourceId)) throw new Error(`边 ${index + 1} 引用了不存在的源节点：${edge.sourceId}`);
+    if (!nodeIds.has(edge.targetId)) throw new Error(`边 ${index + 1} 引用了不存在的目标节点：${edge.targetId}`);
+
+    const key = `${edge.sourceId}\u0000${edge.targetId}`;
+    if (seenEdges.has(key)) throw new Error(`边 ${index + 1} 重复：${edge.sourceId} -> ${edge.targetId}`);
+    seenEdges.add(key);
+    edges.push(edge);
+  });
+
+  return edges;
+}
+
+function assertAcyclicGraph(nodeIds: Set<string>, edges: RhizoEdge[]) {
+  const outgoing = new Map<string, string[]>();
+  nodeIds.forEach((id) => outgoing.set(id, []));
+  edges.forEach((edge) => outgoing.get(edge.sourceId)?.push(edge.targetId));
+
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+
+  const visit = (nodeId: string) => {
+    if (visited.has(nodeId)) return;
+    if (visiting.has(nodeId)) throw new Error('流程图必须是 DAG：检测到环。');
+
+    visiting.add(nodeId);
+    outgoing.get(nodeId)?.forEach(visit);
+    visiting.delete(nodeId);
+    visited.add(nodeId);
+  };
+
+  nodeIds.forEach(visit);
 }
 
 export function validateAnnotation(raw: unknown): RhizoAnnotation {

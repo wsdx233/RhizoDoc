@@ -10,7 +10,10 @@ describe('shared schemas', () => {
   it('validates and normalizes flow objects', () => {
     const flow = validateFlow({
       name: 'demo',
-      nodes: [{ id: 'root', title: 'Root', content: '# Hello', width: 9999 }],
+      nodes: [
+        { id: 'root', title: 'Root', content: '# Hello', width: 9999 },
+        { id: 'child', title: 'Child', content: 'World' },
+      ],
       edges: [{ sourceId: 'root', targetId: 'child' }],
     });
     expect(flow.name).toBe('demo');
@@ -22,6 +25,30 @@ describe('shared schemas', () => {
 
   it('rejects invalid flow objects', () => {
     expect(() => validateFlow({ nodes: [] })).toThrow(/edges/);
+  });
+
+  it('rejects duplicate node ids', () => {
+    expect(() => validateFlow({
+      nodes: [{ id: 'root' }, { id: 'root' }],
+      edges: [],
+    })).toThrow(/id 重复/);
+  });
+
+  it('rejects edges referencing missing nodes', () => {
+    expect(() => validateFlow({
+      nodes: [{ id: 'root' }],
+      edges: [{ sourceId: 'root', targetId: 'missing' }],
+    })).toThrow(/不存在的目标节点/);
+  });
+
+  it('rejects cyclic graphs', () => {
+    expect(() => validateFlow({
+      nodes: [{ id: 'a' }, { id: 'b' }],
+      edges: [
+        { sourceId: 'a', targetId: 'b' },
+        { sourceId: 'b', targetId: 'a' },
+      ],
+    })).toThrow(/DAG/);
   });
 
   it('normalizes LLM payloads', () => {
