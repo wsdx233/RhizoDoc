@@ -1,0 +1,21 @@
+{
+  "name": "rhizodoc",
+  "version": "1.0.0",
+  "description": "RhizoDoc：面向研究与长文档分析的 AI 文档图谱无限画布，接入 OpenAI Responses / Chat Completions API。",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "dompurify": "^3.4.7",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "marked": "^12.0.2",
+    "openai": "^6.41.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

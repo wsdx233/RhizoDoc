@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="msapplication-tap-highlight" content="no" />
+  <title>RhizoDoc</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand">
+      <span class="material-symbols-outlined">account_tree</span>
+      <div>
+        <strong>RhizoDoc</strong>
+        <span id="flow-name">未命名流程图</span>
+      </div>
+    </div>
+    <div id="api-status" class="status-cluster loading" aria-live="polite">
+      <span class="status-chip ready-chip"><svg class="status-fan status-fan-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" aria-hidden="true"><path d="M480-480q0-91 64.5-155.5T700-700q91 0 155.5 64.5T920-480H480ZM104.5-324.5Q40-389 40-480h440q0 91-64.5 155.5T260-260q-91 0-155.5-64.5ZM480-480q-91 0-155.5-64.5T260-700q0-91 64.5-155.5T480-920v440Zm0 440v-440q91 0 155.5 64.5T700-260q0 91-64.5 155.5T480-40Z"/></svg>检查中</span>
+    </div>
+    <nav class="top-actions">
+      <button id="btn-new-doc" class="md-btn ghost"><span class="material-symbols-outlined">note_add</span>新文档</button>
+      <button id="btn-open-doc" class="md-btn ghost"><span class="material-symbols-outlined">folder_open</span>打开文档</button>
+      <button id="btn-save-flow" class="md-btn filled"><span class="material-symbols-outlined">download</span>保存流程图</button>
+      <button id="btn-load-flow" class="md-btn filled tonal"><span class="material-symbols-outlined">upload_file</span>加载流程图</button>
+      <button id="btn-server-save" class="md-btn ghost"><span class="material-symbols-outlined">cloud_upload</span>存到服务端</button>
+      <button id="btn-server-load" class="md-btn ghost"><span class="material-symbols-outlined">cloud_download</span>服务端加载</button>
+    </nav>
+  </header>
+
+  <input id="initial-file-input" type="file" hidden accept=".md,.markdown,.txt,.text,.json,.csv,.html,.js,.ts,.tsx,.jsx,.py,.java,.go,.rs,.c,.cpp,.h,.hpp,.css,.xml,.yaml,.yml" />
+  <input id="doc-file-input" type="file" hidden accept=".md,.markdown,.txt,.text,.json,.csv,.html,.js,.ts,.tsx,.jsx,.py,.java,.go,.rs,.c,.cpp,.h,.hpp,.css,.xml,.yaml,.yml" />
+  <input id="flow-file-input" type="file" hidden accept=".json,application/json" />
+
+  <div id="action-tooltip">
+    <div class="tooltip-view">
+      <span class="material-symbols-outlined icon">auto_awesome</span>
+      <span class="text">批注并生成</span>
+    </div>
+    <div class="input-view">
+      <input type="text" id="ai-prompt" placeholder="附加提示词（可选）...">
+      <button class="icon-btn" id="btn-confirm" title="生成"><span class="material-symbols-outlined">check</span></button>
+      <button class="icon-btn cancel" id="btn-cancel" title="取消"><span class="material-symbols-outlined">close</span></button>
+    </div>
+  </div>
+
+  <div id="node-context-menu" class="context-menu">
+    <div class="menu-item" id="menu-fullscreen"><span class="material-symbols-outlined">fullscreen</span> 全屏查看</div>
+    <div class="menu-item" id="menu-toggle-collapse"><span class="material-symbols-outlined">unfold_more</span> 展开/收起</div>
+    <div class="menu-divider"></div>
+    <div class="menu-item" id="menu-ai-child"><span class="material-symbols-outlined">auto_awesome</span> LLM 生成新节点</div>
+    <div class="menu-item" id="menu-regen"><span class="material-symbols-outlined">refresh</span> 重新生成</div>
+    <div class="menu-divider"></div>
+    <div class="menu-item danger" id="menu-delete"><span class="material-symbols-outlined">delete</span> 删除节点</div>
+  </div>
+
+  <div id="canvas-context-menu" class="context-menu">
+    <div class="menu-item" id="menu-ai-canvas"><span class="material-symbols-outlined">auto_awesome</span> LLM 生成新节点</div>
+    <div class="menu-divider"></div>
+    <div class="menu-item" id="menu-zoom-in"><span class="material-symbols-outlined">zoom_in</span> 放大画布</div>
+    <div class="menu-item" id="menu-zoom-out"><span class="material-symbols-outlined">zoom_out</span> 缩小画布</div>
+    <div class="menu-divider"></div>
+    <div class="menu-item" id="menu-zoom-fit"><span class="material-symbols-outlined">fit_screen</span> 适应屏幕</div>
+    <div class="menu-item" id="menu-center"><span class="material-symbols-outlined">filter_center_focus</span> 回到原点</div>
+  </div>
+
+  <div id="progress-stack" aria-live="polite" aria-label="AI 生成进度"></div>
+
+  <section id="fullscreen-overlay" class="fullscreen-backdrop hidden" aria-modal="true" role="dialog">
+    <div class="fullscreen-container">
+      <div class="fullscreen-header">
+        <div class="fullscreen-title"><span class="material-symbols-outlined">description</span><span id="fs-title">节点全屏浏览</span></div>
+        <button id="btn-fs-close" class="round-btn" title="关闭全屏"><span class="material-symbols-outlined">close</span></button>
+      </div>
+      <div id="fs-content" class="fs-content markdown-body" data-source-id=""></div>
+    </div>
+  </section>
+
+  <main id="viewport">
+    <div id="canvas">
+      <svg id="edges-layer" aria-hidden="true"></svg>
+      <div id="nodes-layer"></div>
+    </div>
+  </main>
+
+  <aside id="toolbar">
+    <div id="minimap"><div id="minimap-content"></div><div id="minimap-viewport"></div></div>
+    <div class="toolbar-group">
+      <button class="toolbar-btn" id="btn-center" title="居中"><span class="material-symbols-outlined">filter_center_focus</span></button>
+    </div>
+    <div class="toolbar-group">
+      <button class="toolbar-btn" id="btn-zoom-in" title="放大"><span class="material-symbols-outlined">add</span></button>
+      <button class="toolbar-btn" id="btn-zoom-fit" title="适应屏幕"><span class="material-symbols-outlined">fit_screen</span></button>
+      <button class="toolbar-btn" id="btn-zoom-out" title="缩小"><span class="material-symbols-outlined">remove</span></button>
+    </div>
+  </aside>
+
+  <section id="welcome-modal" class="modal-backdrop">
+    <div class="modal-card welcome-card">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">开始</p>
+          <h1>创建初始文档</h1>
+        </div>
+        <span class="material-symbols-outlined hero-icon">description</span>
+      </div>
+      <p class="muted">RhizoDoc 可以打开本地 Markdown / 文本文件、让 LLM 根据 Prompt 生成第一张根节点，也可以直接输入一份自定义文档。生成后，选中文字或右键节点即可调用 LLM 扩展 DAG。</p>
+      <div class="welcome-grid">
+        <div class="welcome-stack">
+          <section class="choice-card">
+            <span class="material-symbols-outlined">folder_open</span>
+            <h2>打开本地文件</h2>
+            <p>支持 .md、.txt、代码文件、JSON 流程图。文件只在浏览器本地读取，不会上传到服务端。</p>
+            <button id="btn-open-initial-file" class="md-btn filled"><span class="material-symbols-outlined">upload_file</span>选择文件</button>
+          </section>
+          <section class="choice-card generate-doc">
+            <span class="material-symbols-outlined">auto_awesome</span>
+            <h2>生成新文档</h2>
+            <p>输入主题、目标或资料范围，LLM 会直接生成第一张根节点。</p>
+            <label>Prompt<textarea id="initial-generate-prompt" rows="4" placeholder="例如：生成一份关于 RAG 系统设计的学习提纲，包含核心概念、架构、评估指标和实践路线。"></textarea></label>
+            <button id="btn-generate-initial" class="md-btn filled"><span class="material-symbols-outlined">auto_awesome</span>生成文档</button>
+          </section>
+          <div class="welcome-demo-slot">
+            <button id="btn-use-demo" class="md-btn ghost"><span class="material-symbols-outlined">play_arrow</span>使用演示文档</button>
+          </div>
+        </div>
+        <section class="choice-card custom-doc">
+          <span class="material-symbols-outlined">edit_note</span>
+          <h2>输入自定义文档</h2>
+          <label>标题<input id="initial-title" type="text" value="核心文档" /></label>
+          <label>内容<textarea id="initial-content" rows="9"># 核心文档
+
+选中任意文字，会出现“批注并生成”输入框；也可以右键节点，使用 LLM 生成新节点。
+
+- 节点内容支持 Markdown 渲染
+- 支持保存 / 加载完整流程图
+- 支持通过 .env 配置 OpenAI Responses / Chat Completions API
+- RhizoDoc 会把复杂资料组织成可追溯的知识节点网络</textarea></label>
+          <button id="btn-create-initial" class="md-btn filled"><span class="material-symbols-outlined">check</span>创建文档</button>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <section id="llm-modal" class="modal-backdrop hidden">
+    <div class="modal-card prompt-card">
+      <div class="modal-header compact">
+        <div>
+          <p class="eyebrow">LLM</p>
+          <h2 id="llm-modal-title">生成新节点</h2>
+        </div>
+        <button id="btn-llm-close" class="round-btn" title="关闭"><span class="material-symbols-outlined">close</span></button>
+      </div>
+      <p id="llm-context" class="muted"></p>
+      <label class="prompt-label">生成要求
+        <textarea id="llm-prompt" rows="6" placeholder="例如：提炼关键概念、继续深入解释、生成行动清单、给出反例...">请详细解释并扩展成一个可读的知识节点。</textarea>
+      </label>
+      <div class="modal-footer right">
+        <button id="btn-llm-cancel" class="md-btn ghost">取消</button>
+        <button id="btn-llm-submit" class="md-btn filled"><span class="material-symbols-outlined">auto_awesome</span>生成</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="flows-modal" class="modal-backdrop hidden">
+    <div class="modal-card flows-card">
+      <div class="modal-header compact">
+        <div>
+          <p class="eyebrow">服务端保存</p>
+          <h2>加载流程图</h2>
+        </div>
+        <button id="btn-flows-close" class="round-btn" title="关闭"><span class="material-symbols-outlined">close</span></button>
+      </div>
+      <div id="server-flow-list" class="flow-list"></div>
+      <div class="modal-footer right">
+        <button id="btn-refresh-flows" class="md-btn ghost"><span class="material-symbols-outlined">refresh</span>刷新</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

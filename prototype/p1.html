@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RhizoDoc 原型 - 无限画布</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
+    
+    <style>
+        :root {
+            --md-sys-color-background: #FBFDF8;
+            --md-sys-color-on-background: #191C19;
+            --md-sys-color-surface: #F8FAF5;
+            --md-sys-color-surface-container-low: #F2F7EF;
+            --md-sys-color-surface-container: #EAEFE7;
+            --md-sys-color-surface-container-high: #E0E5DD;
+            --md-sys-color-on-surface: #191C19;
+            --md-sys-color-on-surface-variant: #424940;
+            --md-sys-color-primary-container: #D7E2FF;
+            --md-sys-color-on-primary-container: #001A41;
+            --md-sys-color-primary: #0061A4;
+            --md-sys-color-secondary-container: #CEE5FF;
+            --md-sys-color-on-secondary-container: #001D32;
+            --md-sys-color-error: #BA1A1A;
+            --md-sys-color-outline: #73777F;
+            --md-sys-color-elevation-1: 0px 1px 2px 0px rgba(0,0,0,0.3), 0px 1px 3px 1px rgba(0,0,0,0.15);
+            --md-sys-color-elevation-3: 0px 1px 3px 0px rgba(0,0,0,0.3), 0px 4px 8px 3px rgba(0,0,0,0.15);
+
+            --hl-0-bg: #FFD9E2; --hl-0-fg: #3E001D; 
+            --hl-1-bg: #C3E7FF; --hl-1-fg: #001D35; 
+            --hl-2-bg: #C4ECCB; --hl-2-fg: #00210E; 
+            --hl-3-bg: #FFDEA2; --hl-3-fg: #291800; 
+            --hl-4-bg: #F0DBFF; --hl-4-fg: #2B0053; 
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body, html {
+            width: 100%; height: 100%; overflow: hidden;
+            font-family: 'Roboto', sans-serif;
+            background-color: var(--md-sys-color-background);
+            color: var(--md-sys-color-on-background);
+            user-select: none; 
+        }
+
+        /* --- 顶部栏 (Top Bar) --- */
+        #topbar {
+            position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+            display: flex; align-items: center; justify-content: space-between;
+            background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(12px);
+            border-radius: 99px; padding: 8px 12px 8px 24px;
+            box-shadow: var(--md-sys-color-elevation-1);
+            border: 1px solid var(--md-sys-color-surface-container-high);
+            z-index: 1000; width: calc(100% - 48px); max-width: 1400px;
+        }
+        .topbar-left { display: flex; align-items: center; gap: 12px; }
+        .topbar-left .logo-icon { color: var(--md-sys-color-primary); font-size: 28px; }
+        .topbar-left .title-group { display: flex; flex-direction: column; }
+        .topbar-left .title { font-weight: 700; font-size: 15px; color: var(--md-sys-color-on-surface); }
+        .topbar-left .subtitle { font-size: 11px; color: var(--md-sys-color-on-surface-variant); }
+        
+        .topbar-center {
+            background: #C4ECCB; color: #00210E; padding: 4px 16px; border-radius: 99px;
+            font-size: 12px; font-weight: 500; display: flex; align-items: center; gap: 6px;
+        }
+        .topbar-center::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #005221; }
+
+        .topbar-right { display: flex; align-items: center; gap: 8px; }
+        .btn-text {
+            display: flex; align-items: center; gap: 6px; padding: 8px 16px;
+            border-radius: 99px; border: none; background: transparent; cursor: pointer;
+            font-size: 13px; font-weight: 500; color: var(--md-sys-color-on-surface-variant);
+            transition: all 0.2s;
+        }
+        .btn-text:hover { background: var(--md-sys-color-surface-container); color: var(--md-sys-color-on-surface); }
+        .btn-text.filled { background: var(--md-sys-color-surface-container-high); }
+
+        /* --- 画布与节点 --- */
+        #viewport {
+            width: 100vw; height: 100vh; position: relative; cursor: grab;
+            background-image: radial-gradient(var(--md-sys-color-outline) 1px, transparent 0);
+            background-size: 40px 40px; background-position: 0 0;
+            padding-top: 80px; /* 避开顶栏 */
+        }
+        #viewport:active { cursor: grabbing; }
+
+        #canvas { position: absolute; transform-origin: 0 0; }
+        #edges-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+
+        path.edge { fill: none; stroke: var(--md-sys-color-primary); stroke-width: 3px; stroke-linecap: round; opacity: 0.5; transition: d 0.1s; }
+
+        .node {
+            position: absolute; width: 340px; min-height: 80px;
+            background-color: var(--md-sys-color-surface);
+            border-radius: 20px; padding: 16px 20px;
+            box-shadow: var(--md-sys-color-elevation-1);
+            border: 1px solid var(--md-sys-color-surface-container);
+            transition: box-shadow 0.2s ease, width 0s;
+            border-left: 6px solid var(--md-sys-color-surface-container); /* 默认左侧高亮 */
+            display: flex; flex-direction: column;
+        }
+        /* 智能判断在左侧时的样式 */
+        .node.dir-left { border-left-width: 1px; border-right: 6px solid var(--md-sys-color-surface-container); }
+        .node.loading { opacity: 0.7; pointer-events: none; }
+        .node:hover { box-shadow: var(--md-sys-color-elevation-3); }
+        .node.collapsed .node-content { display: none; }
+
+        .node-header {
+            display: flex; align-items: center; justify-content: space-between;
+            font-weight: 500; color: var(--md-sys-color-primary);
+            cursor: grab; user-select: none; padding-bottom: 8px; 
+            border-bottom: 1px solid transparent;
+        }
+        .node:not(.collapsed) .node-header { border-bottom-color: var(--md-sys-color-surface-container); margin-bottom: 12px; }
+        .node-header:active { cursor: grabbing; }
+        
+        .header-title { display: flex; align-items: center; gap: 8px; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+        
+        /* 节点右上角操作区 */
+        .node-actions { display: flex; align-items: center; gap: 4px; }
+        .node-btn { width: 28px; height: 28px; border-radius: 50%; border: none; background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--md-sys-color-on-surface-variant); }
+        .node-btn:hover { background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-primary); }
+        .node-btn .material-symbols-outlined { font-size: 18px; }
+        
+        /* 拖拽宽度手柄 */
+        .node-resizer { cursor: ew-resize; opacity: 0.4; }
+        .node-resizer:hover { opacity: 1; color: var(--md-sys-color-primary); }
+
+        .node-content { font-size: 14px; line-height: 1.6; color: var(--md-sys-color-on-surface); white-space: pre-wrap; cursor: text; user-select: text; flex: 1; }
+
+        mark.annotated { border-radius: 4px; padding: 2px 4px; box-decoration-break: clone; cursor: pointer; transition: background-color 0.2s; }
+
+        /* --- 左下角进度 Chips --- */
+        #progress-container {
+            position: fixed; bottom: 24px; left: 24px; z-index: 1000;
+            display: flex; flex-direction: column; gap: 12px; pointer-events: none;
+        }
+        .progress-chip {
+            background: var(--md-sys-color-surface);
+            color: var(--md-sys-color-on-surface);
+            padding: 10px 16px; border-radius: 12px;
+            box-shadow: var(--md-sys-color-elevation-3);
+            display: flex; align-items: center; gap: 12px;
+            font-size: 13px; font-weight: 500; border: 1px solid var(--md-sys-color-surface-container-high);
+            animation: slideIn 0.3s cubic-bezier(0.2, 0, 0, 1);
+        }
+        .progress-chip .spinner {
+            width: 16px; height: 16px; border: 2px solid var(--md-sys-color-surface-container-high);
+            border-top-color: var(--md-sys-color-primary); border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes slideIn { from { transform: translateX(-20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* --- 全屏弹窗 --- */
+        #fullscreen-overlay {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(25, 28, 25, 0.4); backdrop-filter: blur(4px);
+            z-index: 2500; display: none; align-items: center; justify-content: center;
+        }
+        #fullscreen-modal {
+            background: var(--md-sys-color-surface); width: 80%; max-width: 900px; height: 85vh;
+            border-radius: 24px; box-shadow: var(--md-sys-color-elevation-3);
+            display: flex; flex-direction: column; overflow: hidden;
+            transform: scale(0.95); opacity: 0; transition: all 0.3s cubic-bezier(0.2, 0, 0, 1);
+        }
+        #fullscreen-overlay.active { display: flex; }
+        #fullscreen-overlay.active #fullscreen-modal { transform: scale(1); opacity: 1; }
+        
+        .fs-header { display: flex; justify-content: space-between; align-items: center; padding: 20px 32px; border-bottom: 1px solid var(--md-sys-color-surface-container); background: var(--md-sys-color-surface-container-low); }
+        .fs-title { font-size: 20px; font-weight: 500; color: var(--md-sys-color-primary); display: flex; align-items: center; gap: 12px; }
+        .fs-close { background: none; border: none; cursor: pointer; color: var(--md-sys-color-on-surface-variant); width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+        .fs-close:hover { background: var(--md-sys-color-surface-container-high); }
+        .fs-content { padding: 32px; flex: 1; overflow-y: auto; font-size: 16px; line-height: 1.8; color: var(--md-sys-color-on-surface); user-select: text; }
+
+        /* 右下角工具栏与右键菜单、Tooltip (继承并调优) */
+        #action-tooltip { position: fixed; display: none; align-items: center; background-color: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); border-radius: 24px; font-size: 14px; box-shadow: var(--md-sys-color-elevation-3); z-index: 3000; transform: translate(-50%, -120%); overflow: hidden; transition: all 0.3s cubic-bezier(0.2, 0, 0, 1); }
+        .tooltip-view { display: flex; align-items: center; padding: 12px 20px; gap: 8px; cursor: pointer; white-space: nowrap; }
+        .tooltip-view:hover { background-color: #c0d1ff; }
+        .input-view { display: none; align-items: center; padding: 6px 12px; gap: 8px; }
+        .input-view input { border: none; outline: none; background: transparent; font-family: inherit; font-size: 14px; width: 200px; color: var(--md-sys-color-on-primary-container); }
+        .icon-btn { background: none; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--md-sys-color-on-primary-container); border-radius: 50%; width: 32px; height: 32px; }
+        .icon-btn:hover { background-color: rgba(0,26,65,0.1); }
+        #action-tooltip:hover .tooltip-view, #action-tooltip.focus .tooltip-view { display: none; }
+        #action-tooltip:hover .input-view, #action-tooltip.focus .input-view { display: flex; }
+
+        #toolbar { position: fixed; bottom: 24px; right: 24px; z-index: 100; display: flex; flex-direction: column; gap: 12px; align-items: flex-end; }
+        .toolbar-group { display: flex; flex-direction: column; background: var(--md-sys-color-surface-container-high); border-radius: 16px; overflow: hidden; box-shadow: var(--md-sys-color-elevation-1); }
+        .toolbar-btn { width: 40px; height: 40px; border: none; background: none; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--md-sys-color-on-surface); transition: background 0.2s; }
+        .toolbar-btn:hover { background-color: rgba(0,0,0,0.05); }
+
+        .context-menu { position: fixed; display: none; background: var(--md-sys-color-surface); border-radius: 12px; box-shadow: var(--md-sys-color-elevation-3); z-index: 3000; padding: 8px 0; min-width: 180px; flex-direction: column; border: 1px solid var(--md-sys-color-surface-container); }
+        .menu-item { padding: 10px 20px; display: flex; align-items: center; gap: 12px; cursor: pointer; font-size: 14px; color: var(--md-sys-color-on-surface); }
+        .menu-item:hover { background-color: var(--md-sys-color-surface-container-high); }
+        .menu-item.danger { color: var(--md-sys-color-error); }
+        .menu-divider { height: 1px; background: var(--md-sys-color-surface-container); margin: 4px 0; }
+
+        ::selection { background-color: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+    </style>
+</head>
+<body>
+
+    <!-- 顶栏 -->
+    <div id="topbar">
+        <div class="topbar-left">
+            <span class="material-symbols-outlined logo-icon">account_tree</span>
+            <div class="title-group">
+                <span class="title">RhizoDoc</span>
+                <span class="subtitle">核心文档</span>
+            </div>
+        </div>
+        <div class="topbar-center">
+            API 已配置 · Gemini-1.5-Pro
+        </div>
+        <div class="topbar-right">
+            <button class="btn-text"><span class="material-symbols-outlined">add_circle</span>新文档</button>
+            <button class="btn-text"><span class="material-symbols-outlined">folder_open</span>打开</button>
+            <button class="btn-text filled"><span class="material-symbols-outlined">save</span>保存流程图</button>
+        </div>
+    </div>
+
+    <!-- 工具提示 -->
+    <div id="action-tooltip">
+        <div class="tooltip-view"><span class="material-symbols-outlined icon">auto_awesome</span><span class="text">批注并生成</span></div>
+        <div class="input-view">
+            <input type="text" id="ai-prompt" placeholder="输入需求, 按回车生成...">
+            <button class="icon-btn" id="btn-confirm"><span class="material-symbols-outlined">check</span></button>
+            <button class="icon-btn" id="btn-cancel"><span class="material-symbols-outlined">close</span></button>
+        </div>
+    </div>
+
+    <!-- 右键菜单 -->
+    <div id="node-context-menu" class="context-menu">
+        <div class="menu-item" id="menu-fullscreen"><span class="material-symbols-outlined">fullscreen</span> 全屏阅读</div>
+        <div class="menu-item" id="menu-toggle-collapse"><span class="material-symbols-outlined">unfold_more</span> 展开 / 收起</div>
+        <div class="menu-divider"></div>
+        <div class="menu-item" id="menu-regen"><span class="material-symbols-outlined">refresh</span> 重新生成</div>
+        <div class="menu-item danger" id="menu-delete"><span class="material-symbols-outlined">delete</span> 删除节点</div>
+    </div>
+
+    <div id="canvas-context-menu" class="context-menu">
+        <div class="menu-item" id="menu-zoom-fit"><span class="material-symbols-outlined">fit_screen</span> 适应屏幕</div>
+        <div class="menu-item" id="menu-center"><span class="material-symbols-outlined">filter_center_focus</span> 回到原点</div>
+    </div>
+
+    <!-- 左下角进度 -->
+    <div id="progress-container"></div>
+
+    <!-- 全屏遮罩与弹窗 -->
+    <div id="fullscreen-overlay">
+        <div id="fullscreen-modal">
+            <div class="fs-header">
+                <div class="fs-title"><span class="material-symbols-outlined">description</span><span id="fs-title-text">标题</span></div>
+                <button class="fs-close" onclick="closeFullscreen()"><span class="material-symbols-outlined">close</span></button>
+            </div>
+            <div class="fs-content" id="fs-content-text" data-node-id=""></div>
+        </div>
+    </div>
+
+    <!-- 核心画布 -->
+    <div id="viewport">
+        <div id="canvas">
+            <svg id="edges-layer"></svg>
+            <div id="nodes-layer"></div>
+        </div>
+    </div>
+
+    <!-- 右下角缩放控制 -->
+    <div id="toolbar">
+        <div class="toolbar-group"><button class="toolbar-btn" onclick="triggerCenter()" title="居中"><span class="material-symbols-outlined">filter_center_focus</span></button></div>
+        <div class="toolbar-group">
+            <button class="toolbar-btn" onclick="zoom(0.2, window.innerWidth/2, window.innerHeight/2)"><span class="material-symbols-outlined">add</span></button>
+            <button class="toolbar-btn" onclick="zoomFit()"><span class="material-symbols-outlined">fit_screen</span></button>
+            <button class="toolbar-btn" onclick="zoom(-0.2, window.innerWidth/2, window.innerHeight/2)"><span class="material-symbols-outlined">remove</span></button>
+        </div>
+    </div>
+
+<script>
+    const state = {
+        canvas: { x: 0, y: 0, scale: 1 },
+        isDragging: false, dragStart: { x: 0, y: 0 },
+        isDraggingNode: false, draggedNodeId: null, nodeDragOffset: { x: 0, y: 0 },
+        isResizing: false, resizedNodeId: null, startWidth: 0, startX: 0,
+        nodes: [], edges: [],
+        currentSelection: { text: '', parentNodeId: null, range: null, isInFullscreen: false },
+        contextNodeId: null,
+        colorIndex: 0
+    };
+
+    const DOM = {
+        viewport: document.getElementById('viewport'), canvas: document.getElementById('canvas'),
+        nodesLayer: document.getElementById('nodes-layer'), edgesLayer: document.getElementById('edges-layer'),
+        tooltip: document.getElementById('action-tooltip'), promptInput: document.getElementById('ai-prompt'),
+        nodeMenu: document.getElementById('node-context-menu'), canvasMenu: document.getElementById('canvas-context-menu'),
+        progressBox: document.getElementById('progress-container'),
+        fsOverlay: document.getElementById('fullscreen-overlay'), fsTitle: document.getElementById('fs-title-text'), fsContent: document.getElementById('fs-content-text')
+    };
+
+    function init() {
+        state.canvas.x = window.innerWidth / 2 - 170; state.canvas.y = Math.max(100, window.innerHeight / 2 - 200);
+        updateCanvasTransform();
+        addNode({
+            id: 'node-root', title: '无限画布交互指南', colorIndex: -1, width: 380, dir: 'right', collapsed: false,
+            content: '欢迎使用 RhizoDoc 原型！\n\n1. 【批注生成】：选中这段文字，会出现悬浮输入框，回车即可在后台生成新节点。\n2. 【空间智能】：系统会自动判断右侧或左侧空间，智能摆放子节点。\n3. 【高度收纳】：生成的长内容节点会默认收起。点击右上角箭头或使用侧边拖拽调整宽度。\n4. 【全屏批注】：点击节点右上角的【全屏】按钮，你可以在全屏模式下沉浸阅读，并且依然可以在里面划线批注，画布会在后台自动生成图谱，不打断你的心流！',
+            x: 0, y: 0, parentId: null
+        });
+        setupEvents();
+    }
+
+    function updateCanvasTransform() {
+        DOM.canvas.style.transform = `translate(${state.canvas.x}px, ${state.canvas.y}px) scale(${state.canvas.scale})`;
+        DOM.viewport.style.backgroundPosition = `${state.canvas.x}px ${state.canvas.y}px`;
+        DOM.viewport.style.backgroundSize = `${40 * state.canvas.scale}px ${40 * state.canvas.scale}px`;
+    }
+
+    function setupEvents() {
+        // 画布拖拽
+        DOM.viewport.addEventListener('mousedown', (e) => {
+            if(e.button !== 0 || e.target.closest('.node') || e.target.closest('#action-tooltip') || e.target.closest('#toolbar') || e.target.closest('#topbar')) return;
+            state.isDragging = true;
+            state.dragStart = { x: e.clientX - state.canvas.x, y: e.clientY - state.canvas.y };
+            hideTooltip(); hideMenus();
+        });
+
+        // 节点拖拽与调整宽度
+        DOM.nodesLayer.addEventListener('mousedown', (e) => {
+            if(e.button !== 0) return;
+            
+            // 宽度调整逻辑
+            if(e.target.closest('.node-resizer')) {
+                state.isResizing = true;
+                state.resizedNodeId = e.target.closest('.node').id;
+                state.startWidth = document.getElementById(state.resizedNodeId).offsetWidth;
+                state.startX = e.clientX;
+                e.stopPropagation();
+                hideTooltip(); hideMenus();
+                return;
+            }
+
+            // 位置拖拽逻辑
+            const header = e.target.closest('.header-title');
+            if (header) {
+                state.isDraggingNode = true;
+                state.draggedNodeId = header.closest('.node').id;
+                const rect = document.getElementById(state.draggedNodeId).getBoundingClientRect();
+                state.nodeDragOffset = { x: (e.clientX - rect.left) / state.canvas.scale, y: (e.clientY - rect.top) / state.canvas.scale };
+                hideTooltip(); hideMenus();
+            }
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (state.isDragging) {
+                state.canvas.x = e.clientX - state.dragStart.x; state.canvas.y = e.clientY - state.dragStart.y;
+                updateCanvasTransform();
+            } else if (state.isDraggingNode) {
+                const nodeEl = document.getElementById(state.draggedNodeId);
+                const newX = (e.clientX - state.canvas.x) / state.canvas.scale - state.nodeDragOffset.x;
+                const newY = (e.clientY - state.canvas.y) / state.canvas.scale - state.nodeDragOffset.y;
+                nodeEl.style.left = `${newX}px`; nodeEl.style.top = `${newY}px`;
+                state.nodes.find(n => n.id === state.draggedNodeId).x = newX; state.nodes.find(n => n.id === state.draggedNodeId).y = newY;
+                drawEdges();
+            } else if (state.isResizing) {
+                const dx = (e.clientX - state.startX) / state.canvas.scale;
+                const nodeEl = document.getElementById(state.resizedNodeId);
+                const newWidth = Math.max(250, state.startWidth + dx); // 最小宽度 250
+                nodeEl.style.width = `${newWidth}px`;
+                state.nodes.find(n => n.id === state.resizedNodeId).width = newWidth;
+                drawEdges();
+            }
+        });
+
+        window.addEventListener('mouseup', () => { state.isDragging = false; state.isDraggingNode = false; state.isResizing = false; });
+        DOM.viewport.addEventListener('wheel', (e) => {
+            if (e.target.closest('.node-content') || e.target.closest('#toolbar') || e.target.closest('#topbar')) return; 
+            e.preventDefault(); zoom(-e.deltaY * 0.001, e.clientX, e.clientY);
+        }, { passive: false });
+
+        document.addEventListener('selectionchange', handleSelection);
+        document.addEventListener('mousedown', (e) => {
+            if (!e.target.closest('#action-tooltip') && !e.target.closest('.node') && !e.target.closest('#fullscreen-modal')) hideTooltip();
+            if (!e.target.closest('.context-menu')) hideMenus();
+        });
+
+        DOM.promptInput.addEventListener('focus', () => DOM.tooltip.classList.add('focus'));
+        DOM.promptInput.addEventListener('blur', () => DOM.tooltip.classList.remove('focus'));
+        DOM.promptInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') triggerLLM(); if (e.key === 'Escape') hideTooltip(); });
+        document.getElementById('btn-confirm').onclick = triggerLLM;
+        document.getElementById('btn-cancel').onclick = hideTooltip;
+
+        // 右键菜单
+        DOM.viewport.addEventListener('contextmenu', (e) => {
+            e.preventDefault(); hideTooltip();
+            const nodeEl = e.target.closest('.node');
+            if(nodeEl) {
+                state.contextNodeId = nodeEl.id;
+                DOM.canvasMenu.style.display = 'none'; DOM.nodeMenu.style.display = 'flex';
+                DOM.nodeMenu.style.left = `${e.clientX}px`; DOM.nodeMenu.style.top = `${e.clientY}px`;
+            } else {
+                DOM.nodeMenu.style.display = 'none'; DOM.canvasMenu.style.display = 'flex';
+                DOM.canvasMenu.style.left = `${e.clientX}px`; DOM.canvasMenu.style.top = `${e.clientY}px`;
+            }
+        });
+
+        // 菜单绑定
+        document.getElementById('menu-regen').onclick = () => { hideMenus(); regenerateNode(state.contextNodeId); };
+        document.getElementById('menu-delete').onclick = () => { hideMenus(); deleteNode(state.contextNodeId); };
+        document.getElementById('menu-fullscreen').onclick = () => { hideMenus(); openFullscreen(state.contextNodeId); };
+        document.getElementById('menu-toggle-collapse').onclick = () => { hideMenus(); toggleCollapse(state.contextNodeId); };
+        document.getElementById('menu-zoom-fit').onclick = () => { hideMenus(); zoomFit(); };
+        document.getElementById('menu-center').onclick = () => { hideMenus(); triggerCenter(); };
+    }
+
+    // 缩放控制
+    function zoom(delta, mouseX, mouseY) {
+        const newScale = Math.min(Math.max(0.2, state.canvas.scale + delta), 3);
+        const rect = DOM.viewport.getBoundingClientRect();
+        const mx = mouseX - rect.left; const my = mouseY - rect.top;
+        state.canvas.x = mx - (mx - state.canvas.x) * (newScale / state.canvas.scale);
+        state.canvas.y = my - (my - state.canvas.y) * (newScale / state.canvas.scale);
+        state.canvas.scale = newScale; updateCanvasTransform(); hideTooltip();
+    }
+    function zoomFit() {
+        if(state.nodes.length === 0) return;
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        state.nodes.forEach(n => { minX = Math.min(minX, n.x); minY = Math.min(minY, n.y); maxX = Math.max(maxX, n.x + n.width); maxY = Math.max(maxY, n.y + 200); });
+        const scale = Math.min(window.innerWidth / (maxX - minX + 200), (window.innerHeight-100) / (maxY - minY + 200), 1.2);
+        state.canvas.scale = scale; state.canvas.x = window.innerWidth / 2 - ((minX + maxX) / 2) * scale; state.canvas.y = window.innerHeight / 2 - ((minY + maxY) / 2) * scale;
+        updateCanvasTransform();
+    }
+    function triggerCenter() { state.canvas.x = window.innerWidth / 2; state.canvas.y = window.innerHeight / 2; updateCanvasTransform(); }
+
+    // 文本选择与工具提示
+    function handleSelection() {
+        const selection = window.getSelection();
+        if (selection.toString().trim().length > 0) {
+            let nodeEl = selection.anchorNode.parentElement.closest('.node');
+            let fsEl = selection.anchorNode.parentElement.closest('#fullscreen-modal');
+            
+            if (nodeEl || fsEl) {
+                const parentId = fsEl ? DOM.fsContent.dataset.nodeId : nodeEl.id;
+                const range = selection.getRangeAt(0); const rect = range.getBoundingClientRect();
+                state.currentSelection = { text: selection.toString(), parentNodeId: parentId, range: range, isInFullscreen: !!fsEl };
+                
+                DOM.tooltip.style.display = 'flex'; 
+                DOM.tooltip.style.left = `${rect.left + rect.width / 2}px`; 
+                DOM.tooltip.style.top = `${Math.max(rect.top - 15, 80)}px`;
+                DOM.promptInput.value = '';
+            }
+        } else if(!DOM.tooltip.classList.contains('focus')) hideTooltip();
+    }
+    function hideTooltip() { DOM.tooltip.style.display = 'none'; DOM.tooltip.classList.remove('focus'); }
+    function hideMenus() { DOM.nodeMenu.style.display = 'none'; DOM.canvasMenu.style.display = 'none'; }
+
+    // 节点基础操作
+    function addNode(nodeData) {
+        state.nodes.push(nodeData);
+        const nodeEl = document.createElement('div');
+        nodeEl.className = `node ${nodeData.dir === 'left' ? 'dir-left' : ''} ${nodeData.collapsed ? 'collapsed' : ''}`; 
+        nodeEl.id = nodeData.id;
+        nodeEl.style.left = `${nodeData.x}px`; nodeEl.style.top = `${nodeData.y}px`;
+        nodeEl.style.width = `${nodeData.width}px`;
+        
+        if (nodeData.colorIndex >= 0) {
+            const colorVar = `var(--hl-${nodeData.colorIndex}-bg)`;
+            if(nodeData.dir === 'left') nodeEl.style.borderRightColor = colorVar;
+            else nodeEl.style.borderLeftColor = colorVar;
+        }
+
+        nodeEl.innerHTML = `
+            <div class="node-header">
+                <div class="header-title"><span class="material-symbols-outlined">description</span>${nodeData.title}</div>
+                <div class="node-actions">
+                    <button class="node-btn" onclick="openFullscreen('${nodeData.id}')" title="全屏阅读"><span class="material-symbols-outlined">fullscreen</span></button>
+                    <button class="node-btn" onclick="toggleCollapse('${nodeData.id}')" title="展开/收起"><span class="material-symbols-outlined">unfold_more</span></button>
+                    <div class="node-btn node-resizer" title="调整宽度"><span class="material-symbols-outlined">drag_indicator</span></div>
+                </div>
+            </div>
+            <div class="node-content">${nodeData.content}</div>`;
+        
+        DOM.nodesLayer.appendChild(nodeEl);
+        if (nodeData.parentId) addEdge(nodeData.parentId, nodeData.id, nodeData.dir);
+    }
+
+    function deleteNode(id) {
+        if(id === 'node-root') return; 
+        const el = document.getElementById(id); if(el) el.remove();
+        const marks = document.querySelectorAll(`mark[data-ref-id="${id}"]`);
+        marks.forEach(mark => { const parent = mark.parentNode; while (mark.firstChild) parent.insertBefore(mark.firstChild, mark); parent.removeChild(mark); });
+        state.nodes = state.nodes.filter(n => n.id !== id);
+        state.edges = state.edges.filter(e => e.sourceId !== id && e.targetId !== id);
+        drawEdges();
+    }
+
+    // 展开收起与全屏
+    function toggleCollapse(id) {
+        const el = document.getElementById(id);
+        const nodeData = state.nodes.find(n => n.id === id);
+        nodeData.collapsed = !nodeData.collapsed;
+        if(nodeData.collapsed) el.classList.add('collapsed'); else el.classList.remove('collapsed');
+        setTimeout(drawEdges, 50); // 等待高度变化后重绘线
+    }
+
+    function openFullscreen(id) {
+        const nodeData = state.nodes.find(n => n.id === id);
+        DOM.fsTitle.innerText = nodeData.title;
+        DOM.fsContent.innerHTML = document.getElementById(id).querySelector('.node-content').innerHTML;
+        DOM.fsContent.dataset.nodeId = id;
+        DOM.fsOverlay.classList.add('active');
+        hideTooltip();
+    }
+    function closeFullscreen() {
+        DOM.fsOverlay.classList.remove('active');
+        // 将全屏中可能产生的高亮同步回原节点
+        const id = DOM.fsContent.dataset.nodeId;
+        document.getElementById(id).querySelector('.node-content').innerHTML = DOM.fsContent.innerHTML;
+        window.getSelection().removeAllRanges(); hideTooltip();
+    }
+
+    // 连线逻辑 (适应左右方向与宽度)
+    function addEdge(sourceId, targetId, targetDir) { state.edges.push({ sourceId, targetId, targetDir }); drawEdges(); }
+
+    function drawEdges() {
+        DOM.edgesLayer.innerHTML = ''; DOM.edgesLayer.style.width = '10000px'; DOM.edgesLayer.style.height = '10000px';
+        DOM.edgesLayer.style.transform = 'translate(-5000px, -5000px)'; const offset = 5000;
+
+        const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+        defs.innerHTML = `<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--md-sys-color-primary)" opacity="0.6"/></marker>`;
+        DOM.edgesLayer.appendChild(defs);
+
+        state.edges.forEach((edge) => {
+            const sEl = document.getElementById(edge.sourceId); const tEl = document.getElementById(edge.targetId);
+            if (sEl && tEl) {
+                // 根据方向决定连线的起点和终点
+                let sX, sY = parseFloat(sEl.style.top) + 24 + offset;
+                let tX, tY = parseFloat(tEl.style.top) + 24 + offset;
+                
+                if (edge.targetDir === 'left') {
+                    sX = parseFloat(sEl.style.left) + offset; // 父节点左侧
+                    tX = parseFloat(tEl.style.left) + tEl.offsetWidth + offset; // 子节点右侧
+                } else {
+                    sX = parseFloat(sEl.style.left) + sEl.offsetWidth + offset; // 父节点右侧
+                    tX = parseFloat(tEl.style.left) + offset; // 子节点左侧
+                }
+
+                const cpXOffset = Math.max(60, Math.abs(tX - sX) / 2);
+                const cp1X = edge.targetDir === 'left' ? sX - cpXOffset : sX + cpXOffset;
+                const cp2X = edge.targetDir === 'left' ? tX + cpXOffset : tX - cpXOffset;
+                
+                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                path.setAttribute('d', `M ${sX} ${sY} C ${cp1X} ${sY}, ${cp2X} ${tY}, ${tX} ${tY}`);
+                path.setAttribute('class', 'edge'); path.setAttribute('marker-end', 'url(#arrow)');
+                DOM.edgesLayer.appendChild(path);
+            }
+        });
+    }
+
+    // 智能空间布局计算
+    function checkOverlap(x, y, width) {
+        for(let n of state.nodes) {
+            if (x < n.x + n.width + 40 && x + width + 40 > n.x && y < n.y + 300 && y + 100 > n.y) return true;
+        }
+        return false;
+    }
+
+    function findSmartPosition(parentX, parentY, parentWidth) {
+        let defaultWidth = 340;
+        // 尝试向右放
+        let tryRightX = parentX + parentWidth + 60; let tryY = parentY;
+        while(checkOverlap(tryRightX, tryY, defaultWidth) && tryY < parentY + 800) tryY += 120;
+        
+        // 如果右侧太拥挤 (被迫下移太多)，尝试向左放
+        if (tryY > parentY + 300) {
+            let tryLeftX = parentX - defaultWidth - 60; let tryLeftY = parentY;
+            while(checkOverlap(tryLeftX, tryLeftY, defaultWidth) && tryLeftY < parentY + 800) tryLeftY += 120;
+            // 如果左侧情况好于右侧，放在左侧
+            if (tryLeftY < tryY) return { x: tryLeftX, y: tryLeftY, dir: 'left', width: defaultWidth };
+        }
+        return { x: tryRightX, y: tryY, dir: 'right', width: defaultWidth };
+    }
+
+    // 进度提示 UI
+    function showProgress(text) {
+        const chip = document.createElement('div'); chip.className = 'progress-chip';
+        chip.innerHTML = `<div class="spinner"></div><span>${text}</span>`;
+        DOM.progressBox.appendChild(chip);
+        return chip;
+    }
+
+    // AI 生成流
+    function triggerLLM() {
+        if (!state.currentSelection.parentNodeId) return;
+        const parentId = state.currentSelection.parentNodeId;
+        const prompt = DOM.promptInput.value || "请详细分析";
+        const range = state.currentSelection.range;
+        const newNodeId = 'node-' + Date.now();
+        const currentColor = state.colorIndex;
+
+        hideTooltip(); window.getSelection().removeAllRanges();
+        
+        // 染色绑定
+        if(range) {
+            try {
+                const mark = document.createElement('mark'); mark.className = 'annotated'; mark.setAttribute('data-ref-id', newNodeId);
+                mark.style.backgroundColor = `var(--hl-${currentColor}-bg)`; mark.style.color = `var(--hl-${currentColor}-fg)`;
+                range.surroundContents(mark);
+            } catch(e) {}
+        }
+        state.colorIndex = (state.colorIndex + 1) % 5;
+
+        // 获取父节点数据并计算智能位置
+        const pNode = state.nodes.find(n => n.id === parentId);
+        const smartPos = findSmartPosition(pNode.x, pNode.y, pNode.width);
+
+        // UI 进度提示
+        const progressChip = showProgress('AI 正在思考并建立联系...');
+
+        // 占位节点
+        addNode({ id: newNodeId, title: 'AI 生成中...', content: '...', x: smartPos.x, y: smartPos.y, width: smartPos.width, parentId: parentId, colorIndex: currentColor, dir: smartPos.dir, collapsed: false });
+        const tempEl = document.getElementById(newNodeId); tempEl.classList.add('loading');
+
+        // 模拟网络请求
+        setTimeout(() => {
+            progressChip.remove();
+            tempEl.classList.remove('loading');
+            tempEl.querySelector('.header-title').innerHTML = `<span class="material-symbols-outlined">auto_awesome</span>AI 解析结果`;
+            
+            const longText = `基于你的要求：“${prompt}”。\n\n1. 【空间判断】注意观察这个节点的位置，如果父节点右侧被挡住，我会自动向左侧生长，并且连线和高亮色带也会智能翻转。\n2. 【默认收起】因为这段文字比较长，为了保持你画布的清爽，它会自动收起。你可以点击右上角箭头展开它。\n3. 【后台执行】即便你刚才是在全屏模式下划线的，我也会在画布后台默默为你构建好这张知识图谱。`;
+            const isLong = longText.length > 80;
+            
+            tempEl.querySelector('.node-content').innerHTML = longText;
+            const nodeData = state.nodes.find(n => n.id === newNodeId);
+            nodeData.title = "AI 解析结果"; nodeData.content = longText;
+            
+            // 如果很长，默认收起
+            if(isLong) toggleCollapse(newNodeId);
+            
+            // 如果是在全屏状态下触发的，更新全屏里的 HTML（保持高亮同步）
+            if (state.currentSelection.isInFullscreen) {
+                document.getElementById(parentId).querySelector('.node-content').innerHTML = DOM.fsContent.innerHTML;
+            }
+
+        }, 1500);
+    }
+
+    init();
+</script>
+</body>
+</html>
