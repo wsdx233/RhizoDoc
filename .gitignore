@@ -1,11 +1,14 @@
 # Dependencies
 node_modules/
 
-# Environment variables and local secrets
+# Build output
+dist/
+
+# Local configuration and secrets
 .env
 .env.*
-!.env.example
 *.local
+rhizodoc.config.json
 
 # Logs
 logs/
