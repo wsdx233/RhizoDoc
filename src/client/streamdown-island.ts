@@ -1,6 +1,7 @@
 import React from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { createCodePlugin } from '@streamdown/code';
+import { math as mathPlugin } from '@streamdown/math';
 import { Streamdown } from 'streamdown';
 import 'streamdown/styles.css';
 
@@ -10,6 +11,7 @@ type StreamdownRenderOptions = {
 
 const roots = new WeakMap<HTMLElement, Root>();
 const codePlugin = createCodePlugin({ themes: ['github-dark', 'github-dark'] });
+const streamdownPlugins = { code: codePlugin, math: mathPlugin };
 
 export function renderStreamdownIsland(container: HTMLElement, markdown: string, { streaming = true }: StreamdownRenderOptions = {}) {
   let root = roots.get(container);
@@ -27,7 +29,7 @@ export function renderStreamdownIsland(container: HTMLElement, markdown: string,
     lineNumbers: false,
     mode: 'streaming',
     parseIncompleteMarkdown: true,
-    plugins: { code: codePlugin },
+    plugins: streamdownPlugins,
     shikiTheme: ['github-dark', 'github-dark'],
     children: markdown,
   }));

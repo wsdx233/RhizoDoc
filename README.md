@@ -7,7 +7,7 @@ RhizoDoc is a local-first AI document workspace that turns long documents, notes
 ## Features
 
 - **Infinite document canvas**: drag, zoom, fit-to-screen, and navigate a graph of Markdown nodes.
-- **Markdown rendering**: static node content is rendered with `marked` and sanitized with `DOMPurify`; LLM streams use a lazy-loaded `streamdown` React island with Shiki highlighting via `@streamdown/code`.
+- **Markdown rendering**: static node content is rendered with `marked` and sanitized with `DOMPurify`; LLM streams use a lazy-loaded `streamdown` React island with Shiki code highlighting and KaTeX math via `@streamdown/code` / `@streamdown/math`.
 - **AI-assisted expansion**:
   - generate the first/root document from a prompt;
   - stream model output into nodes as it is generated, so already-visible text can be selected and annotated immediately;
