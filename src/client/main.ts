@@ -626,7 +626,7 @@ function updateNodeElement(id, { contentHtml = null, preserveContent = false } =
   nodeEl.querySelector('.node-count').textContent = `${(node.content || '').length} 字`;
 
   requestAnimationFrame(() => {
-    if (state.fullscreenNodeId === node.id) syncFullscreenContent(node.id);
+    if (state.fullscreenNodeId === node.id) syncFullscreenContent(node.id, { contentHtml });
     drawEdges();
     updateMinimap();
   });
@@ -1312,14 +1312,14 @@ function closeFullscreen() {
   window.getSelection()?.removeAllRanges();
 }
 
-function syncFullscreenContent(id) {
+function syncFullscreenContent(id, { contentHtml = null } = {}) {
   const node = getNode(id);
   if (!node || state.fullscreenNodeId !== id) return;
   if (shouldPreserveNodeContentForSelection(id)) {
     state.deferredRenderNodeIds.add(id);
     return;
   }
-  DOM.fsContent.innerHTML = renderMarkdown(node.content || '');
+  DOM.fsContent.innerHTML = contentHtml ?? renderMarkdown(node.content || '');
   postProcessNodeContent(DOM.fsContent);
   state.annotations
     .filter((annotation) => annotation.sourceNodeId === id)

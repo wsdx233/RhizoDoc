@@ -1,19 +1,14 @@
-import { marked } from 'marked';
+import { Marked, Renderer } from 'marked';
 import DOMPurify from 'dompurify';
 import hljs from '@highlightjs/cdn-assets/es/highlight.min.js';
 import katex from 'katex';
 
-const markdownRenderer = new marked.Renderer();
-markdownRenderer.code = (code, infostring) => renderHighlightedCode(code, infostring);
-marked.use({ renderer: markdownRenderer, extensions: createMathExtensions() });
-marked.setOptions({ gfm: true, breaks: true });
+const markdownParser = new Marked({ renderer: createMarkdownRenderer(), extensions: createMathExtensions(), gfm: true, breaks: true });
 
 export function renderMarkdown(markdown: unknown): string {
   try {
-    const html = marked.parse(String(markdown || '')) as string;
-    return DOMPurify.sanitize(html, {
-      ADD_ATTR: ['target', 'rel', 'data-language', 'data-math-source', 'data-math-display'],
-    });
+    const html = markdownParser.parse(String(markdown || '')) as string;
+    return sanitizeMarkdownHtml(html);
   } catch {
     return `<pre class="code-block"><code>${escapeHtml(markdown || '')}</code></pre>`;
   }
@@ -26,6 +21,18 @@ export function postProcessNodeContent(contentEl: HTMLElement) {
   });
   contentEl.querySelectorAll('pre code.hljs').forEach((code) => {
     code.closest('pre')?.classList.add('code-block');
+  });
+}
+
+function createMarkdownRenderer() {
+  const renderer = new Renderer();
+  renderer.code = (code, infostring) => renderHighlightedCode(code, infostring);
+  return renderer;
+}
+
+function sanitizeMarkdownHtml(html: string): string {
+  return DOMPurify.sanitize(html, {
+    ADD_ATTR: ['target', 'rel', 'data-language', 'data-math-source', 'data-math-display'],
   });
 }
 
@@ -48,9 +55,15 @@ function renderHighlightedCode(code: unknown, infostring = '') {
   }
 
   if (!highlighted) highlighted = escapeHtml(source);
-  const languageClass = detectedLanguage ? ` language-${cssClassIdent(detectedLanguage)}` : '';
-  const languageAttr = detectedLanguage ? ` data-language="${escapeHtml(detectedLanguage)}"` : '';
-  return `<pre class="code-block"><code class="hljs${languageClass}"${languageAttr}>${highlighted}\n</code></pre>\n`;
+  return renderCodeBlock(highlighted, detectedLanguage, { codeClass: 'hljs' });
+}
+
+function renderCodeBlock(innerHtml: string, language: string, { codeClass = '' } = {}) {
+  const languageClass = language ? ` language-${cssClassIdent(language)}` : '';
+  const languageAttr = language ? ` data-language="${escapeHtml(language)}"` : '';
+  const className = `${codeClass}${languageClass}`.trim();
+  const classAttr = className ? ` class="${className}"` : '';
+  return `<pre class="code-block"><code${classAttr}${languageAttr}>${innerHtml}\n</code></pre>\n`;
 }
 
 function normalizeHighlightLanguage(infostring = '') {
