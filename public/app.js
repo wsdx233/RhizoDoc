@@ -15,14 +15,29 @@ const NODE_COLLAPSE_HEIGHT = 260;
 const NODE_FALLBACK_HEIGHT = 190;
 const EDGE_SVG_OFFSET = 8000;
 const DEFAULT_PROMPT = '请详细解释并扩展成一个可读的知识节点。';
+const MARQUEE_DRAG_THRESHOLD = 4;
 
 const state = {
   canvas: { x: window.innerWidth / 2 - NODE_WIDTH / 2, y: 160, scale: 1 },
+  isMoveMode: false,
+  isMultiSelectMode: false,
   isDragging: false,
   dragStart: { x: 0, y: 0 },
   isDraggingNode: false,
   draggedNodeId: null,
   nodeDragOffset: { x: 0, y: 0 },
+  nodeDragIds: [],
+  nodeDragStartPoint: { x: 0, y: 0 },
+  nodeDragStartClient: { x: 0, y: 0 },
+  nodeDragStartPositions: [],
+  nodeDragMoved: false,
+  nodeDragStartedInMoveMode: false,
+  suppressNodeClick: false,
+  isMarqueeSelecting: false,
+  marqueeStart: { x: 0, y: 0 },
+  marqueeMoved: false,
+  marqueeStartNodeId: null,
+  marqueeBaseSelectionIds: [],
   isResizing: false,
   resizeNodeId: null,
   resizeStartWidth: 0,
@@ -37,7 +52,9 @@ const state = {
   currentSelection: { text: '', parentNodeId: null, start: 0, length: 0, source: 'node' },
   keepTooltipAfterSelectionClear: false,
   contextNodeId: null,
+  contextNodeIds: [],
   contextCanvasPoint: { x: 0, y: 0 },
+  selectedNodeIds: new Set(),
   pendingLLM: null,
   fullscreenNodeId: null,
   progressIdCount: 0,
@@ -67,6 +84,7 @@ const DOM = {
   fullscreenOverlay: document.getElementById('fullscreen-overlay'),
   fsTitle: document.getElementById('fs-title'),
   fsContent: document.getElementById('fs-content'),
+  selectionBox: document.getElementById('selection-box'),
 
   initialFileInput: document.getElementById('initial-file-input'),
   docFileInput: document.getElementById('doc-file-input'),
@@ -181,8 +199,9 @@ function bindEvents() {
     openFullscreen(state.contextNodeId);
   });
   document.getElementById('menu-toggle-collapse').addEventListener('click', () => {
+    const ids = getContextNodeIds();
     hideMenus();
-    toggleNodeCollapse(state.contextNodeId);
+    toggleNodesCollapse(ids);
   });
   document.getElementById('menu-ai-child').addEventListener('click', () => {
     hideMenus();
@@ -193,12 +212,14 @@ function bindEvents() {
     openLLMDialog({ mode: 'canvas', position: { ...state.contextCanvasPoint } });
   });
   document.getElementById('menu-regen').addEventListener('click', () => {
+    const ids = getContextNodeIds();
     hideMenus();
-    regenerateNode(state.contextNodeId);
+    regenerateNodes(ids);
   });
   document.getElementById('menu-delete').addEventListener('click', () => {
+    const ids = getContextNodeIds();
     hideMenus();
-    deleteNode(state.contextNodeId);
+    deleteNodes(ids);
   });
   document.getElementById('menu-zoom-in').addEventListener('click', () => { hideMenus(); zoom(0.2, window.innerWidth / 2, window.innerHeight / 2); });
   document.getElementById('menu-zoom-out').addEventListener('click', () => { hideMenus(); zoom(-0.2, window.innerWidth / 2, window.innerHeight / 2); });
@@ -229,12 +250,20 @@ function bindEvents() {
   });
 
   window.addEventListener('keydown', (event) => {
+    updateInteractionModes(event);
     if (event.key !== 'Escape') return;
+    if (state.isMarqueeSelecting) finishMarqueeSelection({ cancel: true });
     hideTooltip();
     hideMenus();
     closeFullscreen();
     closeLLMDialog();
     closeServerFlowsModal();
+  });
+  window.addEventListener('keyup', updateInteractionModes);
+  window.addEventListener('blur', () => {
+    state.isMoveMode = false;
+    state.isMultiSelectMode = false;
+    syncInteractionModeClasses();
   });
 }
 
@@ -410,8 +439,12 @@ function resetGraph() {
   state.annotations = [];
   state.colorIndex = 0;
   state.currentSelection = { text: '', parentNodeId: null, start: 0, length: 0, source: 'node' };
+  state.contextNodeId = null;
+  state.contextNodeIds = [];
+  clearNodeSelection();
   state.fullscreenNodeId = null;
   DOM.fullscreenOverlay.classList.add('hidden');
+  DOM.selectionBox.style.display = 'none';
   DOM.nodesLayer.innerHTML = '';
   DOM.edgesLayer.innerHTML = '';
 }
@@ -461,6 +494,7 @@ function renderNode(node) {
   nodeEl.id = node.id;
   nodeEl.dataset.nodeId = node.id;
   nodeEl.className = 'node';
+  nodeEl.classList.toggle('selected', isNodeSelected(node.id));
   nodeEl.innerHTML = `
     <div class="node-header" title="拖拽移动节点">
       <div class="node-title-group">
@@ -489,6 +523,7 @@ function updateNodeElement(id) {
   const nodeEl = document.getElementById(id);
   if (!node || !nodeEl) return;
 
+  nodeEl.classList.toggle('selected', isNodeSelected(id));
   node.width = clamp(Number(node.width) || NODE_WIDTH, NODE_MIN_WIDTH, NODE_MAX_WIDTH);
   nodeEl.style.left = `${node.x}px`;
   nodeEl.style.top = `${node.y}px`;
@@ -545,24 +580,43 @@ function updateNodeCollapseState(id) {
     toggleBtn.setAttribute('aria-hidden', isLong ? 'false' : 'true');
   }
   if (expandBtn) {
-    expandBtn.innerHTML = effectiveCollapsed
-      ? '<span class="expand-label">展开全部</span> <span class="material-symbols-outlined">keyboard_arrow_down</span>'
-      : '<span class="expand-label">收起内容</span> <span class="material-symbols-outlined">keyboard_arrow_up</span>';
+    expandBtn.innerHTML = '<span class="expand-label">展开全部</span> <span class="material-symbols-outlined">keyboard_arrow_down</span>';
+    expandBtn.style.display = isLong && effectiveCollapsed ? 'flex' : 'none';
+    expandBtn.setAttribute('aria-hidden', isLong && effectiveCollapsed ? 'false' : 'true');
   }
 }
 
-function toggleNodeCollapse(id) {
+function toggleNodeCollapse(id, forceCollapsed = null) {
   const node = getNode(id);
   const nodeEl = document.getElementById(id);
-  if (!node) return;
-  if (nodeEl && !nodeEl.classList.contains('collapsible')) return;
-  node.collapsed = !node.collapsed;
+  if (!node) return false;
+  if (nodeEl && !nodeEl.classList.contains('collapsible')) return false;
+  const nextCollapsed = typeof forceCollapsed === 'boolean' ? forceCollapsed : !node.collapsed;
+  if (node.collapsed === nextCollapsed) return false;
+  node.collapsed = nextCollapsed;
   node.updatedAt = new Date().toISOString();
   updateNodeCollapseState(id);
   setTimeout(() => {
     drawEdges();
     updateMinimap();
   }, 180);
+  return true;
+}
+
+function toggleNodesCollapse(ids, forceCollapsed = null) {
+  const targets = uniqueNodeIds(ids).filter((id) => {
+    const nodeEl = document.getElementById(id);
+    return nodeEl?.classList.contains('collapsible');
+  });
+  if (targets.length === 0) return;
+
+  const shouldCollapse = typeof forceCollapsed === 'boolean' ? forceCollapsed : targets.some((id) => !getNode(id)?.collapsed);
+  let changed = false;
+  for (const id of targets) changed = toggleNodeCollapse(id, shouldCollapse) || changed;
+  if (!changed) {
+    drawEdges();
+    updateMinimap();
+  }
 }
 
 function renderHighlightedCode(code, infostring = '') {
@@ -774,9 +828,15 @@ function postProcessNodeContent(contentEl) {
 }
 
 function onViewportMouseDown(event) {
+  syncModifierModesFromPointerEvent(event);
   const isLeftButton = event.button === 0;
   const isMiddleButton = event.button === 1;
   if (!isLeftButton && !isMiddleButton) return;
+
+  if (isLeftButton && state.isMultiSelectMode && !event.target.closest('#action-tooltip, #toolbar, #topbar, .context-menu')) {
+    startMarqueeSelection(event);
+    return;
+  }
 
   // 左键保持原逻辑：点在节点/浮层/工具栏时不拖动画布。
   // 中键作为全局画布平移入口：即使鼠标在文档节点内容中，也可以直接拖动画布。
@@ -795,9 +855,21 @@ function onViewportAuxClick(event) {
 }
 
 function onNodesLayerMouseDown(event) {
+  syncModifierModesFromPointerEvent(event);
   if (event.button !== 0) return;
   const nodeEl = event.target.closest('.node');
   if (!nodeEl) return;
+
+  if (state.isMultiSelectMode) {
+    startMarqueeSelection(event, nodeEl.id);
+    event.stopPropagation();
+    return;
+  }
+
+  if (state.isMoveMode) {
+    startNodeDrag(event, nodeEl);
+    return;
+  }
 
   const resizeHandle = event.target.closest('.resize-handle');
   if (resizeHandle) {
@@ -820,19 +892,17 @@ function onNodesLayerMouseDown(event) {
 
   const header = event.target.closest('.node-header');
   if (!header) return;
-  state.isDraggingNode = true;
-  state.draggedNodeId = nodeEl.id;
-  const rect = nodeEl.getBoundingClientRect();
-  state.nodeDragOffset = {
-    x: (event.clientX - rect.left) / state.canvas.scale,
-    y: (event.clientY - rect.top) / state.canvas.scale,
-  };
-  hideTooltip();
-  hideMenus();
-  event.preventDefault();
+  startNodeDrag(event, nodeEl);
 }
 
 function onNodesLayerClick(event) {
+  if (state.suppressNodeClick) {
+    event.preventDefault();
+    event.stopPropagation();
+    state.suppressNodeClick = false;
+    return;
+  }
+
   const action = event.target.closest('[data-node-action]');
   if (action && !action.classList.contains('resize-handle')) {
     const nodeEl = action.closest('.node');
@@ -843,7 +913,7 @@ function onNodesLayerClick(event) {
     hideMenus();
     const actionName = action.dataset.nodeAction;
     if (actionName === 'fullscreen') openFullscreen(nodeEl.id);
-    if (actionName === 'toggle') toggleNodeCollapse(nodeEl.id);
+    if (actionName === 'toggle') toggleNodesCollapse(getActionNodeIds(nodeEl.id), !nodeEl.classList.contains('collapsed'));
     return;
   }
 
@@ -853,9 +923,46 @@ function onNodesLayerClick(event) {
   if (targetId) focusNode(targetId);
 }
 
+function startNodeDrag(event, nodeEl) {
+  const node = getNode(nodeEl.id);
+  if (!node) return;
+
+  const selectedIds = getSelectedNodeIds();
+  const shouldDragSelection = selectedIds.length > 0 && selectedIds.includes(nodeEl.id);
+  if (!shouldDragSelection && selectedIds.length > 0) clearNodeSelection();
+  const dragIds = shouldDragSelection ? selectedIds : [nodeEl.id];
+  state.isDraggingNode = true;
+  state.draggedNodeId = nodeEl.id;
+  state.nodeDragIds = dragIds;
+  state.nodeDragStartPoint = screenToCanvas(event.clientX, event.clientY);
+  state.nodeDragStartClient = { x: event.clientX, y: event.clientY };
+  state.nodeDragStartPositions = dragIds
+    .map((id) => getNode(id))
+    .filter(Boolean)
+    .map((item) => ({ id: item.id, x: item.x, y: item.y }));
+  for (const id of dragIds) document.getElementById(id)?.classList.add('dragging');
+  const rect = nodeEl.getBoundingClientRect();
+  state.nodeDragOffset = {
+    x: (event.clientX - rect.left) / state.canvas.scale,
+    y: (event.clientY - rect.top) / state.canvas.scale,
+  };
+  state.nodeDragMoved = false;
+  state.nodeDragStartedInMoveMode = state.isMoveMode;
+  hideTooltip();
+  hideMenus();
+  window.getSelection()?.removeAllRanges();
+  event.preventDefault();
+  event.stopPropagation();
+}
+
 function onWindowMouseMove(event) {
   if (state.isDraggingMinimap) {
     centerCanvasFromMinimapEvent(event);
+    return;
+  }
+
+  if (state.isMarqueeSelecting) {
+    updateMarqueeSelection(event);
     return;
   }
 
@@ -891,25 +998,40 @@ function onWindowMouseMove(event) {
   }
 
   if (state.isDraggingNode && state.draggedNodeId) {
-    const node = getNode(state.draggedNodeId);
-    const nodeEl = document.getElementById(state.draggedNodeId);
-    if (!node || !nodeEl) return;
-    const newX = (event.clientX - state.canvas.x) / state.canvas.scale - state.nodeDragOffset.x;
-    const newY = (event.clientY - state.canvas.y) / state.canvas.scale - state.nodeDragOffset.y;
-    node.x = newX;
-    node.y = newY;
-    node.updatedAt = new Date().toISOString();
-    nodeEl.style.left = `${newX}px`;
-    nodeEl.style.top = `${newY}px`;
+    const current = screenToCanvas(event.clientX, event.clientY);
+    const dx = current.x - state.nodeDragStartPoint.x;
+    const dy = current.y - state.nodeDragStartPoint.y;
+    const clientDistance = Math.hypot(event.clientX - state.nodeDragStartClient.x, event.clientY - state.nodeDragStartClient.y);
+    if (clientDistance > MARQUEE_DRAG_THRESHOLD) state.nodeDragMoved = true;
+
+    for (const start of state.nodeDragStartPositions) {
+      const node = getNode(start.id);
+      const nodeEl = document.getElementById(start.id);
+      if (!node || !nodeEl) continue;
+      const newX = start.x + dx;
+      const newY = start.y + dy;
+      node.x = newX;
+      node.y = newY;
+      node.updatedAt = new Date().toISOString();
+      nodeEl.style.left = `${newX}px`;
+      nodeEl.style.top = `${newY}px`;
+    }
     drawEdges();
     updateMinimap();
   }
 }
 
-function onWindowMouseUp() {
+function onWindowMouseUp(event) {
+  if (state.isMarqueeSelecting) finishMarqueeSelection({ cancel: false });
   state.isDragging = false;
+  if (state.isDraggingNode && (state.nodeDragMoved || state.nodeDragStartedInMoveMode)) suppressNextNodeClick();
+  document.querySelectorAll('.node.dragging').forEach((nodeEl) => nodeEl.classList.remove('dragging'));
   state.isDraggingNode = false;
   state.draggedNodeId = null;
+  state.nodeDragIds = [];
+  state.nodeDragStartPositions = [];
+  state.nodeDragMoved = false;
+  state.nodeDragStartedInMoveMode = false;
   state.isResizing = false;
   state.resizeNodeId = null;
   state.resizeHandleSide = 'right';
@@ -935,8 +1057,192 @@ function isScrollableElement(element) {
   return element.scrollHeight > element.clientHeight + 1 || element.scrollWidth > element.clientWidth + 1;
 }
 
+function updateInteractionModes(event) {
+  const editable = isEditableTarget(event.target);
+  if (editable) {
+    if (event.type === 'keyup') {
+      if (event.code === 'Space' || event.key === ' ') state.isMoveMode = false;
+      if (event.key === 'Control' || event.key === 'Meta' || (!event.ctrlKey && !event.metaKey)) state.isMultiSelectMode = false;
+      syncInteractionModeClasses();
+    }
+    return;
+  }
+
+  if (event.type === 'keydown') {
+    if (event.code === 'Space' || event.key === ' ') {
+      state.isMoveMode = true;
+      event.preventDefault();
+    }
+    state.isMultiSelectMode = Boolean(event.ctrlKey || event.metaKey || event.key === 'Control' || event.key === 'Meta');
+  } else if (event.type === 'keyup') {
+    if (event.code === 'Space' || event.key === ' ') state.isMoveMode = false;
+    state.isMultiSelectMode = Boolean(event.ctrlKey || event.metaKey);
+  }
+  syncInteractionModeClasses();
+}
+
+function syncModifierModesFromPointerEvent(event) {
+  if (isEditableTarget(event.target)) return;
+  state.isMultiSelectMode = Boolean(event.ctrlKey || event.metaKey);
+  syncInteractionModeClasses();
+}
+
+function syncInteractionModeClasses() {
+  document.body.classList.toggle('move-mode', state.isMoveMode);
+  document.body.classList.toggle('multi-select-mode', state.isMultiSelectMode);
+  DOM.viewport.classList.toggle('move-mode', state.isMoveMode);
+  DOM.viewport.classList.toggle('multi-select-mode', state.isMultiSelectMode);
+}
+
+function isEditableTarget(target) {
+  return Boolean(target?.closest?.('input, textarea, select, button, [contenteditable="true"], [contenteditable=""]'));
+}
+
+function startMarqueeSelection(event, startNodeId = null) {
+  state.isMarqueeSelecting = true;
+  state.marqueeStart = { x: event.clientX, y: event.clientY };
+  state.marqueeMoved = false;
+  state.marqueeStartNodeId = startNodeId;
+  state.marqueeBaseSelectionIds = getSelectedNodeIds();
+  DOM.selectionBox.style.display = 'none';
+  hideTooltip();
+  hideMenus();
+  window.getSelection()?.removeAllRanges();
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function updateMarqueeSelection(event) {
+  const distance = Math.hypot(event.clientX - state.marqueeStart.x, event.clientY - state.marqueeStart.y);
+  if (distance > MARQUEE_DRAG_THRESHOLD) state.marqueeMoved = true;
+  if (!state.marqueeMoved) return;
+
+  updateSelectionBox(event.clientX, event.clientY);
+  const marqueeRect = getMarqueeCanvasRect(event.clientX, event.clientY);
+  const hitIds = state.nodes
+    .filter((node) => rectsIntersect(marqueeRect, getNodeCanvasRect(node)))
+    .map((node) => node.id);
+  setNodeSelection(hitIds);
+  event.preventDefault();
+}
+
+function finishMarqueeSelection({ cancel = false } = {}) {
+  const wasMoved = state.marqueeMoved;
+  const startNodeId = state.marqueeStartNodeId;
+  const baseSelectionIds = state.marqueeBaseSelectionIds;
+  DOM.selectionBox.style.display = 'none';
+  state.isMarqueeSelecting = false;
+  state.marqueeMoved = false;
+  state.marqueeStartNodeId = null;
+  state.marqueeBaseSelectionIds = [];
+
+  if (cancel) {
+    setNodeSelection(baseSelectionIds);
+    return;
+  }
+  suppressNextNodeClick();
+  if (wasMoved) return;
+  if (startNodeId) toggleNodeSelection(startNodeId);
+  else clearNodeSelection();
+}
+
+function updateSelectionBox(clientX, clientY) {
+  const viewportRect = DOM.viewport.getBoundingClientRect();
+  const left = Math.min(state.marqueeStart.x, clientX) - viewportRect.left;
+  const top = Math.min(state.marqueeStart.y, clientY) - viewportRect.top;
+  const width = Math.abs(clientX - state.marqueeStart.x);
+  const height = Math.abs(clientY - state.marqueeStart.y);
+  DOM.selectionBox.style.display = 'block';
+  DOM.selectionBox.style.left = `${left}px`;
+  DOM.selectionBox.style.top = `${top}px`;
+  DOM.selectionBox.style.width = `${width}px`;
+  DOM.selectionBox.style.height = `${height}px`;
+}
+
+function getMarqueeCanvasRect(clientX, clientY) {
+  const a = screenToCanvas(state.marqueeStart.x, state.marqueeStart.y);
+  const b = screenToCanvas(clientX, clientY);
+  return {
+    x: Math.min(a.x, b.x),
+    y: Math.min(a.y, b.y),
+    width: Math.abs(b.x - a.x),
+    height: Math.abs(b.y - a.y),
+  };
+}
+
+function getNodeCanvasRect(node) {
+  const size = getNodeSize(node);
+  return { x: node.x, y: node.y, width: size.width, height: size.height };
+}
+
+function rectsIntersect(a, b) {
+  return a.x <= b.x + b.width && a.x + a.width >= b.x && a.y <= b.y + b.height && a.y + a.height >= b.y;
+}
+
+function uniqueNodeIds(ids) {
+  const seen = new Set();
+  const result = [];
+  for (const id of ids || []) {
+    if (!id || seen.has(id) || !getNode(id)) continue;
+    seen.add(id);
+    result.push(id);
+  }
+  return result;
+}
+
+function getSelectedNodeIds() {
+  return state.nodes.map((node) => node.id).filter((id) => state.selectedNodeIds.has(id));
+}
+
+function isNodeSelected(id) {
+  return state.selectedNodeIds.has(id);
+}
+
+function setNodeSelection(ids) {
+  state.selectedNodeIds = new Set(uniqueNodeIds(ids));
+  syncNodeSelectionClasses();
+}
+
+function clearNodeSelection() {
+  setNodeSelection([]);
+}
+
+function selectOnlyNode(id) {
+  setNodeSelection(id ? [id] : []);
+}
+
+function toggleNodeSelection(id) {
+  if (!getNode(id)) return;
+  const next = new Set(getSelectedNodeIds());
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  setNodeSelection([...next]);
+}
+
+function syncNodeSelectionClasses() {
+  document.querySelectorAll('.node').forEach((nodeEl) => {
+    nodeEl.classList.toggle('selected', state.selectedNodeIds.has(nodeEl.id));
+  });
+}
+
+function suppressNextNodeClick() {
+  state.suppressNodeClick = true;
+  setTimeout(() => {
+    state.suppressNodeClick = false;
+  }, 120);
+}
+
+function getActionNodeIds(clickedId) {
+  const selected = getSelectedNodeIds();
+  return selected.length > 1 && selected.includes(clickedId) ? selected : [clickedId];
+}
+
+function getContextNodeIds() {
+  return state.contextNodeIds.length > 0 ? state.contextNodeIds : (state.contextNodeId ? [state.contextNodeId] : []);
+}
+
 function handleSelection() {
-  if (state.isDragging || state.isDraggingNode || state.isResizing) return;
+  if (state.isDragging || state.isDraggingNode || state.isResizing || state.isMarqueeSelecting || state.isMoveMode || state.isMultiSelectMode) return;
   if (!DOM.llmModal.classList.contains('hidden') || !DOM.welcomeModal.classList.contains('hidden')) return;
 
   const selection = window.getSelection();
@@ -1227,21 +1533,25 @@ function onContextMenu(event) {
   const nodeEl = event.target.closest('.node');
 
   if (nodeEl) {
+    if (!isNodeSelected(nodeEl.id)) selectOnlyNode(nodeEl.id);
+    const contextIds = getActionNodeIds(nodeEl.id);
     state.contextNodeId = nodeEl.id;
-    const node = getNode(nodeEl.id);
+    state.contextNodeIds = contextIds;
+    const selectedNodes = contextIds.map((id) => getNode(id)).filter(Boolean);
     const toggleMenu = document.getElementById('menu-toggle-collapse');
     const toggleIcon = toggleMenu.querySelector('.material-symbols-outlined');
-    const isCollapsed = nodeEl.classList.contains('collapsed');
-    const isCollapsible = nodeEl.classList.contains('collapsible');
-    toggleIcon.textContent = isCollapsed ? 'unfold_more' : 'unfold_less';
-    toggleMenu.lastChild.textContent = isCollapsed ? ' 展开内容' : ' 收起内容';
-    toggleMenu.classList.toggle('disabled', !isCollapsible);
-    document.getElementById('menu-regen').classList.toggle('disabled', nodeEl.id === 'node-root' || !node?.llm);
-    document.getElementById('menu-delete').classList.toggle('disabled', nodeEl.id === 'node-root');
+    const collapsibleIds = contextIds.filter((id) => document.getElementById(id)?.classList.contains('collapsible'));
+    const shouldCollapse = collapsibleIds.some((id) => !getNode(id)?.collapsed);
+    toggleIcon.textContent = shouldCollapse ? 'unfold_less' : 'unfold_more';
+    toggleMenu.lastChild.textContent = shouldCollapse ? ' 收起内容' : ' 展开内容';
+    toggleMenu.classList.toggle('disabled', collapsibleIds.length === 0);
+    document.getElementById('menu-regen').classList.toggle('disabled', !selectedNodes.some((node) => node.id !== 'node-root' && node.llm));
+    document.getElementById('menu-delete').classList.toggle('disabled', !selectedNodes.some((node) => node.id !== 'node-root'));
     DOM.canvasMenu.style.display = 'none';
     showMenu(DOM.nodeMenu, event.clientX, event.clientY);
   } else {
     state.contextNodeId = null;
+    state.contextNodeIds = [];
     state.contextCanvasPoint = screenToCanvas(event.clientX, event.clientY);
     DOM.nodeMenu.style.display = 'none';
     showMenu(DOM.canvasMenu, event.clientX, event.clientY);
@@ -1538,27 +1848,44 @@ function regenerateNode(id) {
 }
 
 function deleteNode(id) {
-  if (!id || id === 'node-root') {
+  deleteNodes([id]);
+}
+
+function regenerateNodes(ids) {
+  const targets = uniqueNodeIds(ids).filter((id) => {
+    const node = getNode(id);
+    return node && id !== 'node-root' && node.llm;
+  });
+  for (const id of targets) regenerateNode(id);
+}
+
+function deleteNodes(ids) {
+  const targets = uniqueNodeIds(ids).filter((id) => id !== 'node-root');
+  if (targets.length === 0) {
     showToast('根节点不能删除');
     return;
   }
-  const node = getNode(id);
-  if (!node) return;
-  const childCount = state.edges.filter((edge) => edge.sourceId === id).length;
-  if (childCount > 0 && !confirm(`该节点还有 ${childCount} 个子节点。删除后子节点会保留但断开连接，继续吗？`)) return;
 
-  unwrapMarksForTarget(id);
-  state.annotations = state.annotations.filter((annotation) => annotation.targetNodeId !== id && annotation.sourceNodeId !== id);
-  state.nodes = state.nodes.filter((item) => item.id !== id);
+  const targetSet = new Set(targets);
+  const childCount = state.edges.filter((edge) => targetSet.has(edge.sourceId) && !targetSet.has(edge.targetId)).length;
+  if (childCount > 0 && !confirm(`选中的节点还有 ${childCount} 个子节点。删除后子节点会保留但断开连接，继续吗？`)) return;
+  if (targets.length > 1 && !confirm(`确定删除选中的 ${targets.length} 个节点吗？`)) return;
+
+  for (const id of targets) unwrapMarksForTarget(id);
+  state.annotations = state.annotations.filter((annotation) => !targetSet.has(annotation.targetNodeId) && !targetSet.has(annotation.sourceNodeId));
+  state.nodes = state.nodes.filter((item) => !targetSet.has(item.id));
   state.nodes.forEach((item) => {
-    if (item.parentId === id) item.parentId = null;
+    if (targetSet.has(item.parentId)) item.parentId = null;
   });
-  state.edges = state.edges.filter((edge) => edge.sourceId !== id && edge.targetId !== id);
-  if (state.fullscreenNodeId === id) closeFullscreen();
-  document.getElementById(id)?.remove();
+  state.edges = state.edges.filter((edge) => !targetSet.has(edge.sourceId) && !targetSet.has(edge.targetId));
+  if (targetSet.has(state.fullscreenNodeId)) closeFullscreen();
+  for (const id of targets) document.getElementById(id)?.remove();
+  setNodeSelection(getSelectedNodeIds().filter((id) => !targetSet.has(id)));
+  state.contextNodeId = null;
+  state.contextNodeIds = [];
   drawEdges();
   updateMinimap();
-  showToast('节点已删除');
+  showToast(targets.length > 1 ? `已删除 ${targets.length} 个节点` : '节点已删除');
 }
 
 function addEdge(sourceId, targetId) {
