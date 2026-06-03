@@ -634,7 +634,8 @@ function createMathExtensions() {
       level: 'block',
       start(src) {
         const match = src.match(/(?:^|\n) {0,3}(?:\$\$|\\\[)/);
-        return match ? match.index : undefined;
+        if (!match) return undefined;
+        return match.index + (match[0].startsWith('\n') ? 1 : 0);
       },
       tokenizer: tokenizeMathBlock,
       renderer(token) {
@@ -660,22 +661,35 @@ function createMathExtensions() {
 }
 
 function tokenizeMathBlock(src) {
-  const rules = [
-    /^ {0,3}\$\$[ \t]*\n([\s\S]+?)\n {0,3}\$\$[ \t]*(?:\n+|$)/,
-    /^ {0,3}\$\$[ \t]*(.+?)[ \t]*\$\$[ \t]*(?:\n+|$)/,
-    /^ {0,3}\\\[[ \t]*\n?([\s\S]+?)\n? {0,3}\\\][ \t]*(?:\n+|$)/,
-  ];
+  return tokenizeDelimitedMathBlock(src, '$$', '$$') || tokenizeDelimitedMathBlock(src, '\\[', '\\]');
+}
 
-  for (const rule of rules) {
-    const match = rule.exec(src);
-    if (match) {
+function tokenizeDelimitedMathBlock(src, openDelimiter, closeDelimiter) {
+  const openPattern = openDelimiter === '$$' ? /^ {0,3}\$\$/ : /^ {0,3}\\\[/;
+  const openMatch = openPattern.exec(src);
+  if (!openMatch) return undefined;
+
+  const bodyStart = openMatch[0].length;
+  let searchFrom = bodyStart;
+
+  while (searchFrom < src.length) {
+    const closeIndex = src.indexOf(closeDelimiter, searchFrom);
+    if (closeIndex < 0) return undefined;
+
+    const afterClose = src.slice(closeIndex + closeDelimiter.length);
+    const trailingMatch = /^[ \t]*(?:\n+|$)/.exec(afterClose);
+    if (trailingMatch) {
+      const rawEnd = closeIndex + closeDelimiter.length + trailingMatch[0].length;
       return {
         type: 'mathBlock',
-        raw: match[0],
-        text: (match[1] || '').trim(),
+        raw: src.slice(0, rawEnd),
+        text: src.slice(bodyStart, closeIndex).trim(),
       };
     }
+
+    searchFrom = closeIndex + closeDelimiter.length;
   }
+
   return undefined;
 }
 
@@ -707,8 +721,17 @@ function isValidInlineMath(text, { strictSpacing = false } = {}) {
   return !strictSpacing || trimmed === value;
 }
 
+function normalizeLatexSource(source, { displayMode = false } = {}) {
+  let text = String(source || '').trim();
+  if (displayMode) {
+    // 容错处理常见的 LLM / Markdown 输出：多行公式中行尾单个反斜杠通常表示 LaTeX 换行 \\。
+    text = text.replace(/(^|[^\\])\\[ \t]*(?=\n)/gm, (_match, prefix) => `${prefix}\\\\`);
+  }
+  return text;
+}
+
 function renderKatex(source, displayMode) {
-  const text = String(source || '').trim();
+  const text = normalizeLatexSource(source, { displayMode });
   if (!text) return '';
 
   const tag = displayMode ? 'div' : 'span';
