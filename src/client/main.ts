@@ -1,5 +1,6 @@
 import './styles.css';
 import { fetchJson, postJson } from './api.js';
+import { byId, collectDomRefs } from './dom.js';
 import { postProcessNodeContent, renderMarkdown } from './markdown.js';
 import { createProgressCard as createProgressCardElement, showToast as showToastMessage, updateProgressCard } from './ui.js';
 import { clamp, closestElement, codeFenceText, cssAttr, escapeHtml, formatBytes, genId, plainExcerpt, safeFileName } from './utils.js';
@@ -61,46 +62,7 @@ const state: any = {
   minimapBounds: null,
 };
 
-const DOM: any = {
-  viewport: document.getElementById('viewport'),
-  canvas: document.getElementById('canvas'),
-  nodesLayer: document.getElementById('nodes-layer'),
-  edgesLayer: document.getElementById('edges-layer'),
-  topbar: document.getElementById('topbar'),
-  flowName: document.getElementById('flow-name'),
-  apiStatus: document.getElementById('api-status'),
-  tooltip: document.getElementById('action-tooltip'),
-  tooltipView: document.querySelector('#action-tooltip .tooltip-view'),
-  promptInput: document.getElementById('ai-prompt'),
-  nodeMenu: document.getElementById('node-context-menu'),
-  canvasMenu: document.getElementById('canvas-context-menu'),
-  minimap: document.getElementById('minimap'),
-  minimapContent: document.getElementById('minimap-content'),
-  minimapViewport: document.getElementById('minimap-viewport'),
-  toast: document.getElementById('toast'),
-  progressStack: document.getElementById('progress-stack'),
-  fullscreenOverlay: document.getElementById('fullscreen-overlay'),
-  fsTitle: document.getElementById('fs-title'),
-  fsContent: document.getElementById('fs-content'),
-  selectionBox: document.getElementById('selection-box'),
-
-  initialFileInput: document.getElementById('initial-file-input'),
-  docFileInput: document.getElementById('doc-file-input'),
-  flowFileInput: document.getElementById('flow-file-input'),
-  welcomeModal: document.getElementById('welcome-modal'),
-  initialTitle: document.getElementById('initial-title'),
-  initialContent: document.getElementById('initial-content'),
-  initialGeneratePrompt: document.getElementById('initial-generate-prompt'),
-  initialGenerateButton: document.getElementById('btn-generate-initial'),
-
-  llmModal: document.getElementById('llm-modal'),
-  llmModalTitle: document.getElementById('llm-modal-title'),
-  llmContext: document.getElementById('llm-context'),
-  llmPrompt: document.getElementById('llm-prompt'),
-
-  flowsModal: document.getElementById('flows-modal'),
-  serverFlowList: document.getElementById('server-flow-list'),
-};
+const DOM = collectDomRefs();
 
 init();
 
@@ -113,13 +75,13 @@ async function init() {
 }
 
 function bindEvents() {
-  document.getElementById('btn-open-initial-file').addEventListener('click', () => DOM.initialFileInput.click());
-  DOM.initialFileInput.addEventListener('change', async (event) => {
-    await handleDocumentFile(event.target.files?.[0], { fromInitial: true });
-    event.target.value = '';
+  byId('btn-open-initial-file').addEventListener('click', () => DOM.initialFileInput.click());
+  DOM.initialFileInput.addEventListener('change', async () => {
+    await handleDocumentFile(DOM.initialFileInput.files?.[0], { fromInitial: true });
+    DOM.initialFileInput.value = '';
   });
 
-  document.getElementById('btn-create-initial').addEventListener('click', () => {
+  byId('btn-create-initial').addEventListener('click', () => {
     createDocument(DOM.initialTitle.value.trim() || '核心文档', DOM.initialContent.value || '', { force: state.nodes.length === 0 });
   });
   DOM.initialGenerateButton.addEventListener('click', generateInitialDocument);
@@ -127,30 +89,30 @@ function bindEvents() {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') generateInitialDocument();
   });
 
-  document.getElementById('btn-use-demo').addEventListener('click', () => {
+  byId('btn-use-demo').addEventListener('click', () => {
     createDocument('RhizoDoc 演示', demoDocument(), { force: state.nodes.length === 0 });
   });
   DOM.welcomeModal.addEventListener('mousedown', (event) => {
     if (event.target === DOM.welcomeModal) hideWelcomeModal();
   });
 
-  document.getElementById('btn-new-doc').addEventListener('click', showWelcomeModal);
-  document.getElementById('btn-open-doc').addEventListener('click', () => DOM.docFileInput.click());
-  DOM.docFileInput.addEventListener('change', async (event) => {
-    await handleDocumentFile(event.target.files?.[0], { fromInitial: false });
-    event.target.value = '';
+  byId('btn-new-doc').addEventListener('click', showWelcomeModal);
+  byId('btn-open-doc').addEventListener('click', () => DOM.docFileInput.click());
+  DOM.docFileInput.addEventListener('change', async () => {
+    await handleDocumentFile(DOM.docFileInput.files?.[0], { fromInitial: false });
+    DOM.docFileInput.value = '';
   });
 
-  document.getElementById('btn-save-flow').addEventListener('click', downloadFlow);
-  document.getElementById('btn-load-flow').addEventListener('click', () => DOM.flowFileInput.click());
-  DOM.flowFileInput.addEventListener('change', async (event) => {
-    await handleFlowFile(event.target.files?.[0]);
-    event.target.value = '';
+  byId('btn-save-flow').addEventListener('click', downloadFlow);
+  byId('btn-load-flow').addEventListener('click', () => DOM.flowFileInput.click());
+  DOM.flowFileInput.addEventListener('change', async () => {
+    await handleFlowFile(DOM.flowFileInput.files?.[0]);
+    DOM.flowFileInput.value = '';
   });
-  document.getElementById('btn-server-save').addEventListener('click', saveFlowToServer);
-  document.getElementById('btn-server-load').addEventListener('click', openServerFlowsModal);
-  document.getElementById('btn-flows-close').addEventListener('click', closeServerFlowsModal);
-  document.getElementById('btn-refresh-flows').addEventListener('click', refreshServerFlows);
+  byId('btn-server-save').addEventListener('click', saveFlowToServer);
+  byId('btn-server-load').addEventListener('click', openServerFlowsModal);
+  byId('btn-flows-close').addEventListener('click', closeServerFlowsModal);
+  byId('btn-refresh-flows').addEventListener('click', refreshServerFlows);
 
   DOM.viewport.addEventListener('mousedown', onViewportMouseDown);
   DOM.viewport.addEventListener('auxclick', onViewportAuxClick);
@@ -188,49 +150,49 @@ function bindEvents() {
     if (event.key === 'Enter') triggerSelectionLLM();
     if (event.key === 'Escape') hideTooltip();
   });
-  document.getElementById('btn-confirm').addEventListener('click', triggerSelectionLLM);
-  document.getElementById('btn-cancel').addEventListener('click', hideTooltip);
+  byId('btn-confirm').addEventListener('click', triggerSelectionLLM);
+  byId('btn-cancel').addEventListener('click', hideTooltip);
 
   DOM.viewport.addEventListener('contextmenu', onContextMenu);
-  document.getElementById('menu-fullscreen').addEventListener('click', () => {
+  byId('menu-fullscreen').addEventListener('click', () => {
     hideMenus();
     openFullscreen(state.contextNodeId);
   });
-  document.getElementById('menu-toggle-collapse').addEventListener('click', () => {
+  byId('menu-toggle-collapse').addEventListener('click', () => {
     const ids = getContextNodeIds();
     hideMenus();
     toggleNodesCollapse(ids);
   });
-  document.getElementById('menu-ai-child').addEventListener('click', () => {
+  byId('menu-ai-child').addEventListener('click', () => {
     hideMenus();
     openLLMDialog({ mode: 'node', parentNodeId: state.contextNodeId });
   });
-  document.getElementById('menu-ai-canvas').addEventListener('click', () => {
+  byId('menu-ai-canvas').addEventListener('click', () => {
     hideMenus();
     openLLMDialog({ mode: 'canvas', position: { ...state.contextCanvasPoint } });
   });
-  document.getElementById('menu-regen').addEventListener('click', () => {
+  byId('menu-regen').addEventListener('click', () => {
     const ids = getContextNodeIds();
     hideMenus();
     regenerateNodes(ids);
   });
-  document.getElementById('menu-delete').addEventListener('click', () => {
+  byId('menu-delete').addEventListener('click', () => {
     const ids = getContextNodeIds();
     hideMenus();
     deleteNodes(ids);
   });
-  document.getElementById('menu-zoom-in').addEventListener('click', () => { hideMenus(); zoom(0.2, window.innerWidth / 2, window.innerHeight / 2); });
-  document.getElementById('menu-zoom-out').addEventListener('click', () => { hideMenus(); zoom(-0.2, window.innerWidth / 2, window.innerHeight / 2); });
-  document.getElementById('menu-zoom-fit').addEventListener('click', () => { hideMenus(); zoomFit(); });
-  document.getElementById('menu-center').addEventListener('click', () => { hideMenus(); triggerCenter(); });
+  byId('menu-zoom-in').addEventListener('click', () => { hideMenus(); zoom(0.2, window.innerWidth / 2, window.innerHeight / 2); });
+  byId('menu-zoom-out').addEventListener('click', () => { hideMenus(); zoom(-0.2, window.innerWidth / 2, window.innerHeight / 2); });
+  byId('menu-zoom-fit').addEventListener('click', () => { hideMenus(); zoomFit(); });
+  byId('menu-center').addEventListener('click', () => { hideMenus(); triggerCenter(); });
 
-  document.getElementById('btn-center').addEventListener('click', triggerCenter);
-  document.getElementById('btn-zoom-in').addEventListener('click', () => zoom(0.2, window.innerWidth / 2, window.innerHeight / 2));
-  document.getElementById('btn-zoom-out').addEventListener('click', () => zoom(-0.2, window.innerWidth / 2, window.innerHeight / 2));
-  document.getElementById('btn-zoom-fit').addEventListener('click', zoomFit);
+  byId('btn-center').addEventListener('click', triggerCenter);
+  byId('btn-zoom-in').addEventListener('click', () => zoom(0.2, window.innerWidth / 2, window.innerHeight / 2));
+  byId('btn-zoom-out').addEventListener('click', () => zoom(-0.2, window.innerWidth / 2, window.innerHeight / 2));
+  byId('btn-zoom-fit').addEventListener('click', zoomFit);
   DOM.minimap.addEventListener('mousedown', onMinimapMouseDown);
 
-  document.getElementById('btn-fs-close').addEventListener('click', closeFullscreen);
+  byId('btn-fs-close').addEventListener('click', closeFullscreen);
   DOM.fullscreenOverlay.addEventListener('mousedown', (event) => {
     if (event.target === DOM.fullscreenOverlay) closeFullscreen();
   });
@@ -240,9 +202,9 @@ function bindEvents() {
     if (targetId) focusNode(targetId);
   });
 
-  document.getElementById('btn-llm-close').addEventListener('click', closeLLMDialog);
-  document.getElementById('btn-llm-cancel').addEventListener('click', closeLLMDialog);
-  document.getElementById('btn-llm-submit').addEventListener('click', submitLLMDialog);
+  byId('btn-llm-close').addEventListener('click', closeLLMDialog);
+  byId('btn-llm-cancel').addEventListener('click', closeLLMDialog);
+  byId('btn-llm-submit').addEventListener('click', submitLLMDialog);
   DOM.llmPrompt.addEventListener('keydown', (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') submitLLMDialog();
   });
@@ -1321,15 +1283,15 @@ function onContextMenu(event) {
     state.contextNodeId = nodeEl.id;
     state.contextNodeIds = contextIds;
     const selectedNodes = contextIds.map((id) => getNode(id)).filter(Boolean);
-    const toggleMenu = document.getElementById('menu-toggle-collapse');
+    const toggleMenu = byId('menu-toggle-collapse');
     const toggleIcon = toggleMenu.querySelector('.material-symbols-outlined');
     const collapsibleIds = contextIds.filter((id) => document.getElementById(id)?.classList.contains('collapsible'));
     const shouldCollapse = collapsibleIds.some((id) => !getNode(id)?.collapsed);
     toggleIcon.textContent = shouldCollapse ? 'unfold_less' : 'unfold_more';
     toggleMenu.lastChild.textContent = shouldCollapse ? ' 收起内容' : ' 展开内容';
     toggleMenu.classList.toggle('disabled', collapsibleIds.length === 0);
-    document.getElementById('menu-regen').classList.toggle('disabled', !selectedNodes.some((node) => node.id !== 'node-root' && node.llm));
-    document.getElementById('menu-delete').classList.toggle('disabled', !selectedNodes.some((node) => node.id !== 'node-root'));
+    byId('menu-regen').classList.toggle('disabled', !selectedNodes.some((node) => node.id !== 'node-root' && node.llm));
+    byId('menu-delete').classList.toggle('disabled', !selectedNodes.some((node) => node.id !== 'node-root'));
     DOM.canvasMenu.style.display = 'none';
     showMenu(DOM.nodeMenu, event.clientX, event.clientY);
   } else {
