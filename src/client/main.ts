@@ -57,6 +57,7 @@ const state: any = {
   colorIndex: 0,
   currentSelection: { text: '', parentNodeId: null, start: 0, length: 0, source: 'node' },
   isNativeTextSelecting: false,
+  hoveredNodeId: null,
   deferredRenderNodeIds: new Set(),
   keepTooltipAfterSelectionClear: false,
   contextNodeId: null,
@@ -126,6 +127,8 @@ function bindEvents() {
   DOM.viewport.addEventListener('auxclick', onViewportAuxClick);
   DOM.nodesLayer.addEventListener('mousedown', onNodesLayerMouseDown);
   DOM.nodesLayer.addEventListener('click', onNodesLayerClick);
+  DOM.nodesLayer.addEventListener('mouseover', onNodesLayerMouseOver);
+  DOM.nodesLayer.addEventListener('mouseout', onNodesLayerMouseOut);
   window.addEventListener('mousemove', onWindowMouseMove);
   window.addEventListener('mouseup', onWindowMouseUp);
   document.addEventListener('mouseup', (event) => {
@@ -775,6 +778,22 @@ function onViewportMouseDown(event) {
 
 function onViewportAuxClick(event) {
   if (event.button === 1) event.preventDefault();
+}
+
+function onNodesLayerMouseOver(event) {
+  const nodeEl = (event.target as Element).closest('.node') as HTMLElement | null;
+  if (!nodeEl || nodeEl.contains(event.relatedTarget as Node | null)) return;
+  if (state.hoveredNodeId === nodeEl.id) return;
+  state.hoveredNodeId = nodeEl.id;
+  drawEdges();
+}
+
+function onNodesLayerMouseOut(event) {
+  const nodeEl = (event.target as Element).closest('.node') as HTMLElement | null;
+  if (!nodeEl || nodeEl.contains(event.relatedTarget as Node | null)) return;
+  if (state.hoveredNodeId !== nodeEl.id) return;
+  state.hoveredNodeId = null;
+  drawEdges();
 }
 
 function onNodesLayerMouseDown(event) {
@@ -1770,6 +1789,7 @@ function deleteNodes(ids) {
   state.edges = state.edges.filter((edge) => !targetSet.has(edge.sourceId) && !targetSet.has(edge.targetId));
   if (targetSet.has(state.fullscreenNodeId)) closeFullscreen();
   for (const id of targets) document.getElementById(id)?.remove();
+  if (targetSet.has(state.hoveredNodeId)) state.hoveredNodeId = null;
   setNodeSelection(getSelectedNodeIds().filter((id) => !targetSet.has(id)));
   state.contextNodeId = null;
   state.contextNodeIds = [];
@@ -1796,6 +1816,9 @@ function drawEdges() {
     '<marker id="arrow-default" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--md-sys-color-outline)"/></marker>',
     ...Array.from({ length: 5 }, (_, index) => `<marker id="arrow-${index}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--hl-${index}-fg)"/></marker>`),
   ].join('');
+  const hoverMaskId = 'edge-hover-node-mask';
+  const hoverMaskRect = getHoveredNodeMaskRect();
+  if (hoverMaskRect) appendEdgeHoverMask(defs, hoverMaskId, hoverMaskRect);
   DOM.edgesLayer.appendChild(defs);
 
   for (const edge of state.edges) {
@@ -1818,8 +1841,13 @@ function drawEdges() {
     const cp2X = targetOnRight ? targetAnchor.x - distance : targetAnchor.x + distance;
 
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    const connectedToHoveredNode = state.hoveredNodeId && (edge.sourceId === state.hoveredNodeId || edge.targetId === state.hoveredNodeId);
+    const pathClasses = ['edge'];
+    if (sourceAnchor.precise) pathClasses.push('edge-from-annotation');
+    if (state.hoveredNodeId) pathClasses.push(connectedToHoveredNode ? 'edge-hover-connected' : 'edge-hover-unrelated');
     path.setAttribute('d', `M ${sourceAnchor.x} ${sourceAnchor.y} C ${cp1X} ${sourceAnchor.y}, ${cp2X} ${targetAnchor.y}, ${targetAnchor.x} ${targetAnchor.y}`);
-    path.setAttribute('class', sourceAnchor.precise ? 'edge edge-from-annotation' : 'edge');
+    path.setAttribute('class', pathClasses.join(' '));
+    if (hoverMaskRect && !connectedToHoveredNode) path.setAttribute('mask', `url(#${hoverMaskId})`);
     const markerId = target?.colorIndex >= 0 ? `arrow-${target.colorIndex % 5}` : 'arrow-default';
     path.setAttribute('marker-end', `url(#${markerId})`);
     path.style.stroke = target?.colorIndex >= 0 ? `var(--hl-${target.colorIndex % 5}-fg)` : 'var(--md-sys-color-outline)';
@@ -1940,6 +1968,38 @@ function clientRectToSvgRect(rect) {
     w: rect.width / scale,
     h: rect.height / scale,
   };
+}
+
+function getHoveredNodeMaskRect() {
+  const hoveredEl = state.hoveredNodeId ? document.getElementById(state.hoveredNodeId) : null;
+  if (!hoveredEl) return null;
+  return getElementSvgRect(hoveredEl as HTMLElement);
+}
+
+function appendEdgeHoverMask(defs, maskId, rect) {
+  const mask = document.createElementNS('http://www.w3.org/2000/svg', 'mask');
+  mask.setAttribute('id', maskId);
+  mask.setAttribute('maskUnits', 'userSpaceOnUse');
+
+  const base = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  base.setAttribute('x', '0');
+  base.setAttribute('y', '0');
+  base.setAttribute('width', '16000');
+  base.setAttribute('height', '16000');
+  base.setAttribute('fill', 'white');
+  mask.appendChild(base);
+
+  const cutoutPadding = 10;
+  const cutout = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  cutout.setAttribute('x', String(rect.x - cutoutPadding));
+  cutout.setAttribute('y', String(rect.y - cutoutPadding));
+  cutout.setAttribute('width', String(rect.w + cutoutPadding * 2));
+  cutout.setAttribute('height', String(rect.h + cutoutPadding * 2));
+  cutout.setAttribute('rx', '28');
+  cutout.setAttribute('fill', 'black');
+  mask.appendChild(cutout);
+
+  defs.appendChild(mask);
 }
 
 function refreshNodeDirections() {

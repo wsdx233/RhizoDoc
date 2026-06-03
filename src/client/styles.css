@@ -122,8 +122,15 @@ body.multi-select-mode #viewport { cursor: crosshair; }
   box-shadow: 0 0 0 1px color-mix(in srgb, white 34%, transparent) inset;
 }
 #canvas { position: absolute; transform-origin: 0 0; }
-#edges-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
-path.edge { fill: none; stroke: var(--md-sys-color-outline); stroke-width: 3px; stroke-linecap: round; opacity: 1; }
+#nodes-layer { position: relative; z-index: 10; }
+#edges-layer { position: absolute; top: 0; left: 0; z-index: 30; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+path.edge {
+  fill: none; stroke: var(--md-sys-color-outline); stroke-width: 2.4px; stroke-linecap: round;
+  opacity: .42; transition: opacity .16s ease, stroke-width .16s ease;
+}
+path.edge-from-annotation { opacity: .56; }
+path.edge-hover-connected { opacity: .78; stroke-width: 2.8px; }
+path.edge-hover-unrelated { opacity: .16; }
 
 .node {
   position: absolute; width: 340px; min-width: 280px; max-width: 820px; min-height: 150px;
