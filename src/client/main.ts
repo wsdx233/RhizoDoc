@@ -1,6 +1,7 @@
 import './styles.css';
 import { fetchJson, postJson } from './api.js';
 import { postProcessNodeContent, renderMarkdown } from './markdown.js';
+import { clamp, closestElement, codeFenceText, cssAttr, escapeHtml, formatBytes, genId, plainExcerpt, safeFileName } from './utils.js';
 import { isFlowObject as isValidFlowShape, validateFlow } from '../shared/schemas.js';
 import type { ApiConfigResponse, FlowListResponse, LLMGenerateResponse, SaveFlowResponse } from '../shared/types.js';
 
@@ -1039,7 +1040,7 @@ function handleSelection() {
   }
 
   const range = selection.getRangeAt(0);
-  const contentEl = closestElement(range.commonAncestorContainer, '.node-content, .fs-content');
+  const contentEl = closestElement<HTMLElement>(range.commonAncestorContainer, '.node-content, .fs-content');
   if (!contentEl) return;
 
   const fsSourceId = contentEl.classList.contains('fs-content') ? contentEl.dataset.sourceId : '';
@@ -2221,64 +2222,6 @@ function getNode(id) {
 
 function updateFlowName() {
   DOM.flowName.textContent = state.flowName || '未命名流程图';
-}
-
-function closestElement(node, selector) {
-  const element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
-  return element?.closest?.(selector) || null;
-}
-
-function genId(prefix) {
-  if (crypto.randomUUID) return `${prefix}-${crypto.randomUUID()}`;
-  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-function escapeHtml(value) {
-  return String(value).replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char]));
-}
-
-function cssClassIdent(value) {
-  return String(value || '').replace(/[^A-Za-z0-9_-]/g, '-');
-}
-
-function cssAttr(value) {
-  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
-
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-}
-
-function safeFileName(value) {
-  return String(value || 'flow').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').replace(/\s+/g, '_').slice(0, 90) || 'flow';
-}
-
-function plainExcerpt(markdown, maxLength) {
-  const text = String(markdown || '')
-    .replace(/```[\s\S]*?```/g, ' 代码块 ')
-    .replace(/[#>*_`\-[\]()]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text;
-}
-
-function codeFenceText(value) {
-  return String(value || '').replace(/```/g, '`\u200b``');
-}
-
-function formatApiType(apiType) {
-  if (apiType === 'anthropic-messages') return 'Anthropic Messages';
-  if (apiType === 'openai-completions') return 'OpenAI Completions';
-  if (apiType === 'openai-responses') return 'OpenAI Responses';
-  if (apiType === 'google-generative-ai') return 'Google Generative AI';
-  return apiType || 'Pi';
-}
-
-function formatBytes(bytes) {
-  if (!Number.isFinite(bytes)) return '';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function createProgressCard({ title, sourceLabel = '批注', sourceText = '', prompt = '', stage = '准备中', summary = '' }: any = {}) {
