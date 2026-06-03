@@ -53,6 +53,7 @@ const state: any = {
   annotations: [],
   colorIndex: 0,
   currentSelection: { text: '', parentNodeId: null, start: 0, length: 0, source: 'node' },
+  deferredRenderNodeIds: new Set(),
   keepTooltipAfterSelectionClear: false,
   contextNodeId: null,
   contextNodeIds: [],
@@ -339,6 +340,7 @@ async function generateInitialDocument() {
   let finalData: LLMStreamDoneEvent | null = null;
   let previewFrame = 0;
   let previewVersion = 0;
+  let thinkingNoticeShown = false;
 
   const initialPayload = { mode: 'initial', userPrompt: prompt };
   const updateStreamingRoot = async () => {
@@ -353,7 +355,7 @@ async function generateInitialDocument() {
     state.flowName = root.title;
     const contentHtml = await renderStreamingMarkdownPreview(root.id, root.content);
     if (version !== previewVersion) return;
-    updateNodeElement(root.id, { contentHtml });
+    updateNodeElementPreservingActiveSelection(root.id, { contentHtml });
     updateFlowName();
     updateProgressCard(progressId, { stage: '流式生成中', summary: plainExcerpt(root.content, 120) });
   };
@@ -376,7 +378,10 @@ async function generateInitialDocument() {
         return;
       }
       if (event.type === 'thinking_delta') {
-        updateProgressCard(progressId, { stage: '模型思考中', summary: plainExcerpt(event.delta, 120) });
+        if (!thinkingNoticeShown) {
+          thinkingNoticeShown = true;
+          updateProgressCard(progressId, { stage: '模型思考中', summary: '模型正在组织答案，正文会在完成思考后继续流式渲染' });
+        }
         return;
       }
       if (event.type === 'done') {
@@ -419,7 +424,7 @@ async function generateInitialDocument() {
     };
     root.updatedAt = new Date().toISOString();
     state.flowName = root.title;
-    updateNodeElement(root.id);
+    updateNodeElementPreservingActiveSelection(root.id);
     updateFlowName();
     updateProgressCard(progressId, { stage: '生成完成', summary: plainExcerpt(root.content || '', 120), done: true });
     showToast('AI 新文档已生成');
@@ -443,7 +448,7 @@ async function generateInitialDocument() {
     root.loading = false;
     root.error = error.message || String(error);
     root.updatedAt = new Date().toISOString();
-    updateNodeElement(root.id);
+    updateNodeElementPreservingActiveSelection(root.id);
     updateProgressCard(progressId, { stage: '生成失败', summary: error.message || String(error), error: true });
     showToast(`生成新文档失败：${error.message}`);
   } finally {
@@ -569,7 +574,7 @@ function renderNode(node) {
   updateNodeElement(node.id);
 }
 
-function updateNodeElement(id, { contentHtml = null } = {}) {
+function updateNodeElement(id, { contentHtml = null, preserveContent = false } = {}) {
   const node = getNode(id);
   const nodeEl = document.getElementById(id);
   if (!node || !nodeEl) return;
@@ -591,9 +596,11 @@ function updateNodeElement(id, { contentHtml = null } = {}) {
 
   const contentEl = nodeEl.querySelector('.node-content') as HTMLElement;
   nodeEl.classList.remove('collapsible', 'collapsed', 'expanded');
-  contentEl.innerHTML = contentHtml ?? renderMarkdown(node.content || '');
-  postProcessNodeContent(contentEl);
-  applyAnnotationsForSourceNode(node.id);
+  if (!preserveContent) {
+    contentEl.innerHTML = contentHtml ?? renderMarkdown(node.content || '');
+    postProcessNodeContent(contentEl);
+    applyAnnotationsForSourceNode(node.id);
+  }
 
   nodeEl.querySelector('.node-kind').textContent = node.llm ? 'AI / Markdown' : '文档 / Markdown';
   nodeEl.querySelector('.node-count').textContent = `${(node.content || '').length} 字`;
@@ -604,6 +611,41 @@ function updateNodeElement(id, { contentHtml = null } = {}) {
     drawEdges();
     updateMinimap();
   });
+}
+
+function updateNodeElementPreservingActiveSelection(id, options = {}) {
+  if (shouldPreserveNodeContentForSelection(id)) {
+    state.deferredRenderNodeIds.add(id);
+    updateNodeElement(id, { ...options, preserveContent: true });
+    return true;
+  }
+  state.deferredRenderNodeIds.delete(id);
+  updateNodeElement(id, options);
+  return false;
+}
+
+function shouldPreserveNodeContentForSelection(nodeId) {
+  if (!nodeId) return false;
+  if (state.currentSelection?.parentNodeId === nodeId && state.currentSelection.text && DOM.tooltip.style.display === 'flex') return true;
+
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || !selection.toString().trim()) return false;
+  const range = selection.getRangeAt(0);
+  const contentEl = closestElement<HTMLElement>(range.commonAncestorContainer, '.node-content, .fs-content');
+  if (!contentEl) return false;
+  const fullscreenSourceId = contentEl.classList.contains('fs-content') ? contentEl.dataset.sourceId : '';
+  const selectedNodeId = fullscreenSourceId || contentEl.closest('.node')?.id || '';
+  return selectedNodeId === nodeId;
+}
+
+function flushDeferredNodeRender(nodeId = null, { force = false } = {}) {
+  const ids = nodeId ? [nodeId] : Array.from(state.deferredRenderNodeIds);
+  for (const id of ids) {
+    if (!id || !state.deferredRenderNodeIds.has(id)) continue;
+    if (!force && shouldPreserveNodeContentForSelection(id)) continue;
+    state.deferredRenderNodeIds.delete(id);
+    updateNodeElement(id);
+  }
 }
 
 function updateNodeCollapseState(id) {
@@ -1331,9 +1373,13 @@ function rangeIntersectsNode(range, node) {
 }
 
 function hideTooltip() {
+  const deferredNodeId = state.currentSelection?.parentNodeId || null;
   clearTemporarySelection();
   DOM.tooltip.style.display = 'none';
   DOM.tooltip.classList.remove('focus');
+  window.getSelection()?.removeAllRanges();
+  state.currentSelection = { text: '', parentNodeId: null, start: 0, length: 0, source: 'node' };
+  flushDeferredNodeRender(deferredNodeId, { force: true });
 }
 
 function hideMenus() {
@@ -1363,6 +1409,10 @@ function closeFullscreen() {
 function syncFullscreenContent(id) {
   const node = getNode(id);
   if (!node || state.fullscreenNodeId !== id) return;
+  if (shouldPreserveNodeContentForSelection(id)) {
+    state.deferredRenderNodeIds.add(id);
+    return;
+  }
   DOM.fsContent.innerHTML = renderMarkdown(node.content || '');
   postProcessNodeContent(DOM.fsContent);
   state.annotations
@@ -1612,6 +1662,7 @@ async function callLLMAndUpdate(nodeId, payload, { progressId = null } = {}) {
   let finalData: LLMStreamDoneEvent | null = null;
   let previewFrame = 0;
   let previewVersion = 0;
+  let thinkingNoticeShown = false;
 
   const updateStreamingPreview = async () => {
     previewFrame = 0;
@@ -1624,7 +1675,7 @@ async function callLLMAndUpdate(nodeId, payload, { progressId = null } = {}) {
     node.updatedAt = new Date().toISOString();
     const contentHtml = await renderStreamingMarkdownPreview(nodeId, node.content);
     if (version !== previewVersion) return;
-    updateNodeElement(nodeId, { contentHtml });
+    updateNodeElementPreservingActiveSelection(nodeId, { contentHtml });
     updateProgressCard(progressId, { stage: '流式生成中', summary: plainExcerpt(node.content, 130) });
   };
 
@@ -1645,7 +1696,10 @@ async function callLLMAndUpdate(nodeId, payload, { progressId = null } = {}) {
         return;
       }
       if (event.type === 'thinking_delta') {
-        updateProgressCard(progressId, { stage: '模型思考中', summary: plainExcerpt(event.delta, 130) });
+        if (!thinkingNoticeShown) {
+          thinkingNoticeShown = true;
+          updateProgressCard(progressId, { stage: '模型思考中', summary: '模型正在组织答案，正文会在完成思考后继续流式渲染' });
+        }
         return;
       }
       if (event.type === 'done') {
@@ -1689,7 +1743,7 @@ async function callLLMAndUpdate(nodeId, payload, { progressId = null } = {}) {
       reasoningEffort: data.reasoningEffort,
       usage: data.usage,
     };
-    updateNodeElement(nodeId);
+    updateNodeElementPreservingActiveSelection(nodeId);
     updateProgressCard(progressId, { stage: '生成完成', summary: plainExcerpt(node.content, 130), done: true });
     showToast('LLM 节点已生成');
   } catch (error) {
@@ -1712,7 +1766,7 @@ async function callLLMAndUpdate(nodeId, payload, { progressId = null } = {}) {
     node.loading = false;
     node.error = error.message || String(error);
     node.updatedAt = new Date().toISOString();
-    updateNodeElement(nodeId);
+    updateNodeElementPreservingActiveSelection(nodeId);
     updateProgressCard(progressId, { stage: '生成失败', summary: error.message || String(error), error: true });
     showToast(`LLM 调用失败：${error.message}`);
   } finally {
