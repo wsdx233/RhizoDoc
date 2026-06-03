@@ -3,6 +3,7 @@ import { fetchJson, postEventStream, postJson } from './api.js';
 import { demoDocument } from './demo.js';
 import { byId, collectDomRefs } from './dom.js';
 import { postProcessNodeContent, renderMarkdown } from './markdown.js';
+import { clearStreamingPreview, renderStreamingMarkdownPreview } from './streaming-preview.js';
 import { createProgressCard as createProgressCardElement, showToast as showToastMessage, updateProgressCard } from './ui.js';
 import { clamp, closestElement, codeFenceText, cssAttr, escapeHtml, formatBytes, genId, plainExcerpt, safeFileName } from './utils.js';
 import { normalizeGeneratedNode } from '../shared/generated-node.js';
@@ -337,10 +338,12 @@ async function generateInitialDocument() {
   let rawText = '';
   let finalData: LLMStreamDoneEvent | null = null;
   let previewFrame = 0;
+  let previewVersion = 0;
 
   const initialPayload = { mode: 'initial', userPrompt: prompt };
-  const updateStreamingRoot = () => {
+  const updateStreamingRoot = async () => {
     previewFrame = 0;
+    const version = ++previewVersion;
     if (!rawText.trim()) return;
     const generated = normalizeGeneratedNode(rawText, initialPayload);
     root.title = generated.title || fallbackTitle;
@@ -348,7 +351,9 @@ async function generateInitialDocument() {
     root.loading = true;
     root.updatedAt = new Date().toISOString();
     state.flowName = root.title;
-    updateNodeElement(root.id);
+    const contentHtml = await renderStreamingMarkdownPreview(root.id, root.content);
+    if (version !== previewVersion) return;
+    updateNodeElement(root.id, { contentHtml });
     updateFlowName();
     updateProgressCard(progressId, { stage: '流式生成中', summary: plainExcerpt(root.content, 120) });
   };
@@ -387,6 +392,7 @@ async function generateInitialDocument() {
       cancelAnimationFrame(previewFrame);
       previewFrame = 0;
     }
+    previewVersion += 1;
 
     const data = finalData || {
       type: 'done',
@@ -399,6 +405,7 @@ async function generateInitialDocument() {
       reasoningEffort: '',
     };
 
+    clearStreamingPreview(root.id);
     root.title = data.title || fallbackTitle;
     root.content = data.content || '（模型没有返回内容）';
     root.loading = false;
@@ -421,6 +428,8 @@ async function generateInitialDocument() {
       cancelAnimationFrame(previewFrame);
       previewFrame = 0;
     }
+    previewVersion += 1;
+    clearStreamingPreview(root.id);
     root.title = '生成失败';
     root.content = [
       '> LLM 调用失败。',
@@ -560,7 +569,7 @@ function renderNode(node) {
   updateNodeElement(node.id);
 }
 
-function updateNodeElement(id) {
+function updateNodeElement(id, { contentHtml = null } = {}) {
   const node = getNode(id);
   const nodeEl = document.getElementById(id);
   if (!node || !nodeEl) return;
@@ -582,7 +591,7 @@ function updateNodeElement(id) {
 
   const contentEl = nodeEl.querySelector('.node-content') as HTMLElement;
   nodeEl.classList.remove('collapsible', 'collapsed', 'expanded');
-  contentEl.innerHTML = renderMarkdown(node.content || '');
+  contentEl.innerHTML = contentHtml ?? renderMarkdown(node.content || '');
   postProcessNodeContent(contentEl);
   applyAnnotationsForSourceNode(node.id);
 
@@ -1602,16 +1611,20 @@ async function callLLMAndUpdate(nodeId, payload, { progressId = null } = {}) {
   let rawText = '';
   let finalData: LLMStreamDoneEvent | null = null;
   let previewFrame = 0;
+  let previewVersion = 0;
 
-  const updateStreamingPreview = () => {
+  const updateStreamingPreview = async () => {
     previewFrame = 0;
+    const version = ++previewVersion;
     if (!rawText.trim()) return;
     const generated = normalizeGeneratedNode(rawText, enrichedPayload);
     node.title = generated.title || 'AI 生成节点';
     node.content = generated.content || '（正在生成正文…）';
     node.loading = true;
     node.updatedAt = new Date().toISOString();
-    updateNodeElement(nodeId);
+    const contentHtml = await renderStreamingMarkdownPreview(nodeId, node.content);
+    if (version !== previewVersion) return;
+    updateNodeElement(nodeId, { contentHtml });
     updateProgressCard(progressId, { stage: '流式生成中', summary: plainExcerpt(node.content, 130) });
   };
 
@@ -1648,6 +1661,7 @@ async function callLLMAndUpdate(nodeId, payload, { progressId = null } = {}) {
       cancelAnimationFrame(previewFrame);
       previewFrame = 0;
     }
+    previewVersion += 1;
 
     const data = finalData || {
       type: 'done',
@@ -1660,6 +1674,7 @@ async function callLLMAndUpdate(nodeId, payload, { progressId = null } = {}) {
       reasoningEffort: '',
     };
 
+    clearStreamingPreview(nodeId);
     updateProgressCard(progressId, { stage: '解析响应', summary: '正在渲染生成节点' });
     node.title = data.title || 'AI 生成节点';
     node.content = data.content || '（模型没有返回内容）';
@@ -1682,6 +1697,8 @@ async function callLLMAndUpdate(nodeId, payload, { progressId = null } = {}) {
       cancelAnimationFrame(previewFrame);
       previewFrame = 0;
     }
+    previewVersion += 1;
+    clearStreamingPreview(nodeId);
     node.title = '生成失败';
     node.content = [
       '> LLM 调用失败。',

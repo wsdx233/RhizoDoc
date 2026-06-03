@@ -11,6 +11,7 @@ RhizoDoc is a local-first AI document workspace that turns long documents, notes
 - **AI-assisted expansion**:
   - generate the first/root document from a prompt;
   - stream model output into nodes as it is generated, so already-visible text can be selected and annotated immediately;
+  - render active streamed code fences with `@shikijs/stream`, then fall back to the stable Markdown renderer when generation completes;
   - select text and generate linked child nodes;
   - right-click nodes to expand or regenerate content;
   - right-click the canvas to create independent nodes.
