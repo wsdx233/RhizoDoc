@@ -170,11 +170,9 @@ function buildInstructions() {
     '你是一个严谨的中文知识图谱/文档研究助手。',
     '你的任务是为无限画布 DAG 生成一个新的节点（也可以是第一张根文档节点）。',
     '输出格式必须是纯文本，不要输出 JSON、XML、YAML、代码围栏或额外说明。',
-    '第一行必须是节点短标题，尽量不超过 18 个汉字；不要加“标题：”前缀，也不要使用 Markdown 标题符号。',
+    '第一行必须是节点纯文本短标题，尽量不超过 18 个汉字；不要加“标题：”前缀，也不要使用 Markdown 标题符号。',
     '从第二行开始是节点 Markdown 正文；服务端会按第一个换行把第一行拆为 title，其余内容拆为 content。',
-    '正文必须是高质量 Markdown，可使用二级/三级标题、要点列表、引用、表格、代码块和 LaTeX 公式。',
-    '除非用户明确要求，不要大段复述原文；应基于原文进行解释、扩展、拆解、追问或生成下一步。',
-    '如果上下文不足，请明确说明你的假设，并给出可执行的下一步。',
+    '正文必须是高质量 Markdown，可使用二级/三级标题、要点列表、引用、表格、代码块和 LaTeX 公式。'
   ].join('\n');
 }
 
@@ -195,7 +193,7 @@ function buildLLMInput(payload: LLMGeneratePayload) {
     payload.selectedText ? `\n【选中文本】\n${payload.selectedText}` : '',
     payload.parentContent ? `\n【来源节点 Markdown 内容】\n${payload.parentContent}` : '',
     payload.graphSummary ? `\n【当前流程图摘要】\n${payload.graphSummary}` : '',
-    '\n请返回适合直接渲染为一个画布节点的纯文本：第一行是短标题，第二行起是中文 Markdown 正文。不要返回 JSON。',
+    '\n请返回适合直接渲染为一个画布节点的纯文本：第一行是纯文本短标题，第二行起是中文 Markdown 正文。不要返回 JSON。',
   ].filter(Boolean).join('\n');
 }
 
