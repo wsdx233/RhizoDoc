@@ -2,45 +2,39 @@ import express from 'express';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
+import { parseArgs } from 'node:util';
 import { completeSimple } from '@earendil-works/pi-ai';
 import { AuthStorage, getAgentDir, ModelRegistry, SettingsManager } from '@earendil-works/pi-coding-agent';
+import { normalizeRhizoDocConfig } from './src/shared/config.js';
+import { normalizeFlowName as normalizeSafeFlowName, validateFlow, validateLLMPayload } from './src/shared/schemas.js';
+import type { LLMGeneratePayload, RhizoDocConfig } from './src/shared/types.js';
 
-const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = Number(process.env.PORT || 3000);
-const PUBLIC_DIR = path.join(__dirname, 'public');
-const FLOWS_DIR = path.join(__dirname, 'data', 'flows');
+const cliOptions = parseCliOptions(process.argv.slice(2));
+const APP_CONFIG_PATH = cliOptions.config ? path.resolve(cliOptions.config) : path.resolve(__dirname, 'rhizodoc.config.json');
+const appConfig = await loadRhizoDocConfig(APP_CONFIG_PATH);
+const PORT = cliOptions.port ?? parsePort(appConfig.server.port, 3000);
+const DIST_DIR = path.join(__dirname, 'dist');
+const HAS_CLIENT_BUILD = await directoryExists(DIST_DIR);
+const FLOWS_DIR = resolveProjectPath(appConfig.storage.flowsDir);
 const AGENT_DIR = getAgentDir();
 const authStorage = AuthStorage.create(path.join(AGENT_DIR, 'auth.json'));
 const modelRegistry = ModelRegistry.create(authStorage, path.join(AGENT_DIR, 'models.json'));
 const settingsManager = SettingsManager.create(__dirname, AGENT_DIR);
-const DEFAULT_MAX_TOKENS = Number(process.env.RHIZODOC_MAX_TOKENS || 12000);
+const DEFAULT_MAX_TOKENS = appConfig.pi.maxTokens;
 
 await fs.mkdir(FLOWS_DIR, { recursive: true });
 
 app.disable('x-powered-by');
-app.use(express.json({ limit: '20mb' }));
-app.use(express.static(PUBLIC_DIR));
-
-// 前端直接使用 node_modules 中的 ESM 版本，避免引入构建工具。
-// 使用 sendFile 的 root + 相对路径形式，避免 pnpm 的 node_modules/.pnpm 真实路径被当作 dotfile 拒绝。
-const MARKED_ROOT = path.dirname(require.resolve('marked/package.json'));
-const DOMPURIFY_DIST_DIR = path.dirname(require.resolve('dompurify'));
-
-app.get('/vendor/marked.esm.js', (_req, res) => {
-  res.sendFile('lib/marked.esm.js', { root: MARKED_ROOT });
-});
-
-app.get('/vendor/purify.es.mjs', (_req, res) => {
-  res.sendFile('purify.es.mjs', { root: DOMPURIFY_DIST_DIR });
-});
-
-app.use('/vendor/highlight', express.static(path.dirname(require.resolve('@highlightjs/cdn-assets/package.json'))));
-app.use('/vendor/katex', express.static(path.dirname(require.resolve('katex/package.json'))));
+app.use(express.json({ limit: appConfig.server.jsonLimit }));
+if (HAS_CLIENT_BUILD) {
+  app.use(express.static(DIST_DIR));
+} else {
+  console.warn('未找到 dist/ 前端构建产物；API 仍会启动。请运行 pnpm build，或开发时访问 Vite 服务。');
+}
 
 app.get('/api/config', async (_req, res) => {
   const config = await getPiModelConfig();
@@ -54,7 +48,7 @@ app.get('/api/config', async (_req, res) => {
     ready: config.ready,
     hasApiKey: config.ready,
     authStatus: config.authStatus,
-    configSource: 'pi',
+    configSource: config.configSource,
     error: config.error || null,
   });
 });
@@ -107,23 +101,21 @@ app.get('/api/flows', async (_req, res) => {
 });
 
 app.post('/api/flows', async (req, res) => {
-  const flow = req.body?.flow;
-  const name = normalizeFlowName(req.body?.name || flow?.name || `flow-${new Date().toISOString().slice(0, 19)}`);
+  try {
+    const flow = validateFlow(req.body?.flow);
+    const name = normalizeFlowName(req.body?.name || flow.name || `flow-${new Date().toISOString().slice(0, 19)}`);
+    const filePath = resolveFlowPath(name);
+    const savedFlow = {
+      ...flow,
+      name,
+      savedAt: new Date().toISOString(),
+    };
 
-  if (!flow || typeof flow !== 'object' || !Array.isArray(flow.nodes) || !Array.isArray(flow.edges)) {
-    res.status(400).json({ error: '流程图数据格式不正确，需要包含 nodes 和 edges 数组。' });
-    return;
+    await fs.writeFile(filePath, `${JSON.stringify(savedFlow, null, 2)}\n`, 'utf8');
+    res.json({ ok: true, name, fileName: `${name}.json` });
+  } catch (error) {
+    res.status(400).json({ error: '流程图数据格式不正确', detail: error.message || String(error) });
   }
-
-  const filePath = resolveFlowPath(name);
-  const savedFlow = {
-    ...flow,
-    name,
-    savedAt: new Date().toISOString(),
-  };
-
-  await fs.writeFile(filePath, `${JSON.stringify(savedFlow, null, 2)}\n`, 'utf8');
-  res.json({ ok: true, name, fileName: `${name}.json` });
 });
 
 app.get('/api/flows/:name', async (req, res) => {
@@ -150,7 +142,11 @@ app.delete('/api/flows/:name', async (req, res) => {
 
 app.use((req, res, next) => {
   if (req.method === 'GET' && req.accepts('html')) {
-    res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+    if (HAS_CLIENT_BUILD) {
+      res.sendFile(path.join(DIST_DIR, 'index.html'));
+      return;
+    }
+    res.status(503).send('RhizoDoc 前端尚未构建。请运行 pnpm build，或开发时访问 Vite 服务（通常是 http://localhost:5173）。');
     return;
   }
   next();
@@ -158,23 +154,15 @@ app.use((req, res, next) => {
 
 app.listen(PORT, async () => {
   console.log(`RhizoDoc 已启动: http://localhost:${PORT}`);
+  console.log(`RhizoDoc config: ${appConfig.loaded ? APP_CONFIG_PATH : 'defaults (rhizodoc.config.json not found)'}`);
   console.log(`Pi agent dir: ${AGENT_DIR}`);
   const config = await getPiModelConfig();
   console.log(`Pi model: ${config.provider}/${config.modelId}, thinking: ${config.thinkingLevel || 'off'}`);
   if (!config.ready) console.warn(`警告: Pi 模型不可用：${config.error || '未配置模型凭据'}`);
 });
 
-function normalizeLLMPayload(raw) {
-  return {
-    mode: clampText(raw.mode || 'selection', 40),
-    userPrompt: clampText(raw.userPrompt || raw.prompt || '请详细解释并扩展成一个可读的知识节点。', 4000),
-    selectedText: clampText(raw.selectedText || '', 12000),
-    parentTitle: clampText(raw.parentTitle || '', 200),
-    parentContent: clampText(raw.parentContent || '', 18000),
-    rootTitle: clampText(raw.rootTitle || '', 200),
-    graphSummary: clampText(raw.graphSummary || '', 8000),
-    apiType: '',
-  };
+function normalizeLLMPayload(raw: unknown): LLMGeneratePayload {
+  return validateLLMPayload(raw);
 }
 
 function buildInstructions() {
@@ -190,7 +178,7 @@ function buildInstructions() {
   ].join('\n');
 }
 
-function buildLLMInput(payload) {
+function buildLLMInput(payload: LLMGeneratePayload) {
   const modeText = {
     selection: '基于用户选中的文本生成子节点。',
     node: '基于右键节点的完整内容生成一个新的子节点。',
@@ -211,16 +199,16 @@ function buildLLMInput(payload) {
   ].filter(Boolean).join('\n');
 }
 
-async function requestLLMNode(payload) {
+async function requestLLMNode(payload: LLMGeneratePayload) {
   const instructions = buildInstructions();
   const input = buildLLMInput(payload);
   return createPiNode({ instructions, input });
 }
 
-async function createPiNode({ instructions, input }) {
+async function createPiNode({ instructions, input }: { instructions: string; input: string }) {
   const config = await getPiModelConfig();
   if (!config.ready) {
-    const error = new Error(config.error || 'Pi 模型未配置或缺少凭据。请使用 pi /model 或 pi-ai login 配置模型。');
+    const error = new Error(config.error || 'Pi 模型未配置或缺少凭据。请使用 pi /model 或 pi-ai login 配置模型。') as Error & Record<string, unknown>;
     error.status = 400;
     error.provider = config.provider;
     error.model = config.modelId;
@@ -236,7 +224,7 @@ async function createPiNode({ instructions, input }) {
   }, {
     apiKey: config.apiKey,
     headers: config.headers,
-    reasoning: config.thinkingLevel === 'off' ? undefined : config.thinkingLevel,
+    reasoning: config.thinkingLevel === 'off' ? undefined : (config.thinkingLevel as any),
     maxTokens: Math.min(DEFAULT_MAX_TOKENS, config.model.maxTokens || DEFAULT_MAX_TOKENS),
     timeoutMs: retrySettings.timeoutMs,
     maxRetries: retrySettings.maxRetries,
@@ -257,9 +245,9 @@ async function getPiModelConfig() {
   authStorage.reload();
   modelRegistry.refresh();
 
-  const provider = process.env.RHIZODOC_PI_PROVIDER || settingsManager.getDefaultProvider();
-  const modelId = process.env.RHIZODOC_PI_MODEL || settingsManager.getDefaultModel();
-  const thinkingLevel = process.env.RHIZODOC_THINKING_LEVEL || settingsManager.getDefaultThinkingLevel() || 'off';
+  const provider = appConfig.pi.provider || settingsManager.getDefaultProvider();
+  const modelId = appConfig.pi.model || settingsManager.getDefaultModel();
+  const thinkingLevel = appConfig.pi.thinkingLevel || settingsManager.getDefaultThinkingLevel() || 'off';
 
   if (!provider || !modelId) {
     return {
@@ -268,6 +256,7 @@ async function getPiModelConfig() {
       modelId: modelId || '',
       thinkingLevel,
       authStatus: { configured: false },
+      configSource: appConfig.loaded ? 'rhizodoc.config.json + pi' : 'pi',
       error: `未设置 Pi 默认模型。请运行 pi 后通过 /model 选择模型，或编辑 ${path.join(AGENT_DIR, 'settings.json')}。`,
     };
   }
@@ -281,13 +270,23 @@ async function getPiModelConfig() {
       modelId,
       thinkingLevel,
       authStatus,
+      configSource: appConfig.loaded ? 'rhizodoc.config.json + pi' : 'pi',
       error: `Pi 模型不存在：${provider}/${modelId}。请检查 ${path.join(AGENT_DIR, 'models.json')} 或 /model 配置。`,
     };
   }
 
   const resolvedAuth = await modelRegistry.getApiKeyAndHeaders(model);
   if (!resolvedAuth.ok) {
-    return { ready: false, provider, modelId, model, thinkingLevel, authStatus, error: resolvedAuth.error };
+    return {
+      ready: false,
+      provider,
+      modelId,
+      model,
+      thinkingLevel,
+      authStatus,
+      configSource: appConfig.loaded ? 'rhizodoc.config.json + pi' : 'pi',
+      error: 'error' in resolvedAuth ? resolvedAuth.error : '模型凭据解析失败',
+    };
   }
 
   return {
@@ -297,12 +296,13 @@ async function getPiModelConfig() {
     model,
     thinkingLevel,
     authStatus,
+    configSource: appConfig.loaded ? 'rhizodoc.config.json + pi' : 'pi',
     apiKey: resolvedAuth.apiKey,
     headers: resolvedAuth.headers,
   };
 }
 
-function extractPiText(response) {
+function extractPiText(response: any): string {
   return (response?.content || [])
     .filter((part) => part?.type === 'text' && typeof part.text === 'string')
     .map((part) => part.text)
@@ -310,7 +310,7 @@ function extractPiText(response) {
     .trim();
 }
 
-function normalizeGeneratedNode(outputText, payload) {
+function normalizeGeneratedNode(outputText: unknown, payload: LLMGeneratePayload) {
   const text = String(outputText || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
   const fallbackTitle = getFallbackGeneratedTitle(text, payload);
 
@@ -337,12 +337,12 @@ function normalizeGeneratedNode(outputText, payload) {
   };
 }
 
-function getFallbackGeneratedTitle(text, payload) {
+function getFallbackGeneratedTitle(text: string, payload: LLMGeneratePayload): string {
   const firstHeading = text.match(/^#{1,3}\s+(.+)$/m)?.[1]?.trim();
   return firstHeading || (payload.userPrompt ? payload.userPrompt.slice(0, 24) : 'AI 生成节点');
 }
 
-function cleanGeneratedTitle(value) {
+function cleanGeneratedTitle(value: unknown): string {
   return String(value || '')
     .replace(/^#{1,6}\s+/, '')
     .replace(/^标题[:：]\s*/i, '')
@@ -350,38 +350,79 @@ function cleanGeneratedTitle(value) {
 }
 
 
-function errorMessage(error) {
-  return [
-    error?.message,
-    error?.error?.message,
-    error?.param,
-    error?.code,
-    error?.error?.param,
-    error?.error?.code,
-    error?.response?.data?.error?.message,
-    error?.response?.data?.error?.param,
-    error?.response?.data?.error?.code,
-    error?.response?.data?.message,
-  ].filter(Boolean).join(' ');
+function parseCliOptions(args: string[]) {
+  const { values } = parseArgs({
+    args,
+    strict: true,
+    allowPositionals: false,
+    options: {
+      help: { type: 'boolean', short: 'h' },
+      port: { type: 'string', short: 'p' },
+      config: { type: 'string' },
+    },
+  });
+
+  if (values.help) {
+    console.log('用法：pnpm start -- [--port 3003] [--config rhizodoc.config.json]');
+    process.exit(0);
+  }
+
+  return {
+    port: values.port === undefined ? undefined : parsePort(values.port),
+    config: values.config,
+  };
 }
 
-function clampText(value, max) {
+function parsePort(value: unknown, fallback?: number): number {
+  if (value === undefined || value === null || value === '') {
+    if (fallback !== undefined) return fallback;
+    throw new Error('缺少端口号');
+  }
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`端口号无效：${value}`);
+  }
+  return port;
+}
+
+function clampText(value: unknown, max: number): string {
   const text = typeof value === 'string' ? value : JSON.stringify(value ?? '');
   if (text.length <= max) return text;
   return `${text.slice(0, max)}\n……（已截断 ${text.length - max} 字）`;
 }
 
-function normalizeFlowName(rawName) {
-  const base = String(rawName || 'untitled')
-    .trim()
-    .replace(/\.json$/i, '')
-    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
-    .replace(/\s+/g, '_')
-    .slice(0, 90);
-  return base || `flow-${Date.now()}`;
+function normalizeFlowName(rawName: unknown): string {
+  return normalizeSafeFlowName(rawName, `flow-${Date.now()}`);
 }
 
-function resolveFlowPath(name) {
+async function directoryExists(directory: string): Promise<boolean> {
+  try {
+    const stat = await fs.stat(directory);
+    return stat.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+async function loadRhizoDocConfig(configPath: string): Promise<RhizoDocConfig> {
+  try {
+    const text = await fs.readFile(configPath, 'utf8');
+    const parsed = JSON.parse(text);
+    return { ...normalizeRhizoDocConfig(parsed), loaded: true };
+  } catch (error: any) {
+    if (error?.code === 'ENOENT') return { ...normalizeRhizoDocConfig({}), loaded: false };
+    if (error instanceof SyntaxError) {
+      throw new Error(`RhizoDoc 配置文件不是有效 JSON：${configPath}\n${error.message}`);
+    }
+    throw error;
+  }
+}
+
+function resolveProjectPath(value: string): string {
+  return path.isAbsolute(value) ? value : path.resolve(__dirname, value);
+}
+
+function resolveFlowPath(name: unknown): string {
   const normalized = normalizeFlowName(name);
   const filePath = path.resolve(FLOWS_DIR, `${normalized}.json`);
   const flowsRoot = path.resolve(FLOWS_DIR);

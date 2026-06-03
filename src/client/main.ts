@@ -1,7 +1,10 @@
-import { marked } from '/vendor/marked.esm.js';
-import DOMPurify from '/vendor/purify.es.mjs';
-import hljs from '/vendor/highlight/es/highlight.min.js';
-import katex from '/vendor/katex/dist/katex.mjs';
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
+import hljs from '@highlightjs/cdn-assets/es/highlight.min.js';
+import katex from 'katex';
+import './styles.css';
+import { fetchJson, postJson } from './api.js';
+import { isFlowObject as isValidFlowShape, validateFlow } from '../shared/schemas.js';
 
 const markdownRenderer = new marked.Renderer();
 markdownRenderer.code = (code, infostring) => renderHighlightedCode(code, infostring);
@@ -17,7 +20,7 @@ const EDGE_SVG_OFFSET = 8000;
 const DEFAULT_PROMPT = '请详细解释并扩展成一个可读的知识节点。';
 const MARQUEE_DRAG_THRESHOLD = 4;
 
-const state = {
+const state: any = {
   canvas: { x: window.innerWidth / 2 - NODE_WIDTH / 2, y: 160, scale: 1 },
   isMoveMode: false,
   isMultiSelectMode: false,
@@ -63,7 +66,7 @@ const state = {
   minimapBounds: null,
 };
 
-const DOM = {
+const DOM: any = {
   viewport: document.getElementById('viewport'),
   canvas: document.getElementById('canvas'),
   nodesLayer: document.getElementById('nodes-layer'),
@@ -175,9 +178,9 @@ function bindEvents() {
 
   document.addEventListener('selectionchange', handleSelection);
   document.addEventListener('mousedown', (event) => {
-    if (!event.target.closest('#action-tooltip') && event.target.closest('.node-content, .fs-content')) hideTooltip();
-    if (!event.target.closest('#action-tooltip') && !event.target.closest('.node') && !event.target.closest('.fullscreen-container')) hideTooltip();
-    if (!event.target.closest('.context-menu')) hideMenus();
+    if (!(event.target as Element).closest('#action-tooltip') && (event.target as Element).closest('.node-content, .fs-content')) hideTooltip();
+    if (!(event.target as Element).closest('#action-tooltip') && !(event.target as Element).closest('.node') && !(event.target as Element).closest('.fullscreen-container')) hideTooltip();
+    if (!(event.target as Element).closest('.context-menu')) hideMenus();
   });
 
   DOM.tooltipView.addEventListener('click', () => {
@@ -237,7 +240,7 @@ function bindEvents() {
     if (event.target === DOM.fullscreenOverlay) closeFullscreen();
   });
   DOM.fsContent.addEventListener('click', (event) => {
-    const annotated = event.target.closest('mark.annotated, .math-node.annotated-math');
+    const annotated = (event.target as Element).closest('mark.annotated, .math-node.annotated-math') as HTMLElement | null;
     const targetId = annotated?.dataset.refId;
     if (targetId) focusNode(targetId);
   });
@@ -269,8 +272,7 @@ function bindEvents() {
 
 async function loadAppConfig() {
   try {
-    const response = await fetch('/api/config');
-    const config = await response.json();
+    const config = await fetchJson<any>('/api/config');
     state.appConfig = config;
     if (config.ready || config.hasApiKey) {
       DOM.apiStatus.className = 'status-cluster ok';
@@ -365,13 +367,7 @@ async function generateInitialDocument() {
   });
   try {
     updateProgressCard(progressId, { stage: '请求模型', summary: '模型正在生成完整 Markdown 文档' });
-    const response = await fetch('/api/llm/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode: 'initial', userPrompt: prompt }),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.detail || data.error || `HTTP ${response.status}`);
+    const data = await postJson<any>('/api/llm/generate', { mode: 'initial', userPrompt: prompt });
 
     const title = data.title || prompt.slice(0, 24) || 'AI 生成文档';
     createDocument(title, data.content || '（模型没有返回内容）', { force: true });
@@ -538,7 +534,7 @@ function updateNodeElement(id) {
   icon.textContent = node.loading ? 'hourglass_top' : (node.llm ? 'auto_awesome' : 'description');
   nodeEl.querySelector('.node-title').textContent = node.title || '未命名节点';
 
-  const contentEl = nodeEl.querySelector('.node-content');
+  const contentEl = nodeEl.querySelector('.node-content') as HTMLElement;
   nodeEl.classList.remove('collapsible', 'collapsed', 'expanded');
   contentEl.innerHTML = renderMarkdown(node.content || '');
   postProcessNodeContent(contentEl);
@@ -558,7 +554,7 @@ function updateNodeElement(id) {
 function updateNodeCollapseState(id) {
   const node = getNode(id);
   const nodeEl = document.getElementById(id);
-  const contentEl = nodeEl?.querySelector('.node-content');
+  const contentEl = nodeEl?.querySelector('.node-content') as HTMLElement | null;
   if (!node || !nodeEl || !contentEl) return;
 
   nodeEl.style.setProperty('--node-collapse-height', `${NODE_COLLAPSE_HEIGHT}px`);
@@ -568,13 +564,13 @@ function updateNodeCollapseState(id) {
   nodeEl.classList.toggle('collapsed', effectiveCollapsed);
   nodeEl.classList.toggle('expanded', isLong && !effectiveCollapsed);
 
-  const toggleBtn = nodeEl.querySelector('[data-node-action="toggle"]');
+  const toggleBtn = nodeEl.querySelector('[data-node-action="toggle"]') as HTMLElement | null;
   const toggleIcon = toggleBtn?.querySelector('.material-symbols-outlined');
   if (toggleBtn && toggleIcon) {
     toggleIcon.textContent = effectiveCollapsed ? 'unfold_more' : 'unfold_less';
     toggleBtn.title = effectiveCollapsed ? '展开内容' : '收起内容';
   }
-  const expandBtn = nodeEl.querySelector('.expand-btn');
+  const expandBtn = nodeEl.querySelector('.expand-btn') as HTMLElement | null;
   if (toggleBtn) {
     toggleBtn.style.display = isLong ? 'inline-flex' : 'none';
     toggleBtn.setAttribute('aria-hidden', isLong ? 'false' : 'true');
@@ -806,9 +802,9 @@ function renderKatex(source, displayMode) {
   }
 }
 
-function renderMarkdown(markdown) {
+function renderMarkdown(markdown): string {
   try {
-    const html = marked.parse(markdown || '');
+    const html = marked.parse(markdown || '') as string;
     return DOMPurify.sanitize(html, {
       ADD_ATTR: ['target', 'rel', 'data-language', 'data-math-source', 'data-math-display'],
     });
@@ -817,7 +813,7 @@ function renderMarkdown(markdown) {
   }
 }
 
-function postProcessNodeContent(contentEl) {
+function postProcessNodeContent(contentEl: HTMLElement) {
   contentEl.querySelectorAll('a[href]').forEach((link) => {
     link.setAttribute('target', '_blank');
     link.setAttribute('rel', 'noopener noreferrer');
@@ -833,14 +829,14 @@ function onViewportMouseDown(event) {
   const isMiddleButton = event.button === 1;
   if (!isLeftButton && !isMiddleButton) return;
 
-  if (isLeftButton && state.isMultiSelectMode && !event.target.closest('#action-tooltip, #toolbar, #topbar, .context-menu')) {
+  if (isLeftButton && state.isMultiSelectMode && !(event.target as Element).closest('#action-tooltip, #toolbar, #topbar, .context-menu')) {
     startMarqueeSelection(event);
     return;
   }
 
   // 左键保持原逻辑：点在节点/浮层/工具栏时不拖动画布。
   // 中键作为全局画布平移入口：即使鼠标在文档节点内容中，也可以直接拖动画布。
-  if (isLeftButton && event.target.closest('.node, #action-tooltip, #toolbar, #topbar')) return;
+  if (isLeftButton && (event.target as Element).closest('.node, #action-tooltip, #toolbar, #topbar')) return;
 
   state.isDragging = true;
   state.dragStart = { x: event.clientX - state.canvas.x, y: event.clientY - state.canvas.y };
@@ -857,7 +853,7 @@ function onViewportAuxClick(event) {
 function onNodesLayerMouseDown(event) {
   syncModifierModesFromPointerEvent(event);
   if (event.button !== 0) return;
-  const nodeEl = event.target.closest('.node');
+  const nodeEl = (event.target as Element).closest('.node') as HTMLElement | null;
   if (!nodeEl) return;
 
   if (state.isMultiSelectMode) {
@@ -871,7 +867,7 @@ function onNodesLayerMouseDown(event) {
     return;
   }
 
-  const resizeHandle = event.target.closest('.resize-handle');
+  const resizeHandle = (event.target as Element).closest('.resize-handle') as HTMLElement | null;
   if (resizeHandle) {
     const node = getNode(nodeEl.id);
     if (!node) return;
@@ -888,9 +884,9 @@ function onNodesLayerMouseDown(event) {
     return;
   }
 
-  if (event.target.closest('.node-btn') || event.target.closest('.expand-btn')) return;
+  if ((event.target as Element).closest('.node-btn') || (event.target as Element).closest('.expand-btn')) return;
 
-  const header = event.target.closest('.node-header');
+  const header = (event.target as Element).closest('.node-header');
   if (!header) return;
   startNodeDrag(event, nodeEl);
 }
@@ -903,7 +899,7 @@ function onNodesLayerClick(event) {
     return;
   }
 
-  const action = event.target.closest('[data-node-action]');
+  const action = (event.target as Element).closest('[data-node-action]') as HTMLElement | null;
   if (action && !action.classList.contains('resize-handle')) {
     const nodeEl = action.closest('.node');
     if (!nodeEl) return;
@@ -917,7 +913,7 @@ function onNodesLayerClick(event) {
     return;
   }
 
-  const annotated = event.target.closest('mark.annotated, .math-node.annotated-math');
+  const annotated = (event.target as Element).closest('mark.annotated, .math-node.annotated-math') as HTMLElement | null;
   if (!annotated) return;
   const targetId = annotated.dataset.refId;
   if (targetId) focusNode(targetId);
@@ -1530,7 +1526,7 @@ function syncFullscreenContent(id) {
 function onContextMenu(event) {
   event.preventDefault();
   hideTooltip();
-  const nodeEl = event.target.closest('.node');
+  const nodeEl = (event.target as Element).closest('.node') as HTMLElement | null;
 
   if (nodeEl) {
     if (!isNodeSelected(nodeEl.id)) selectOnlyNode(nodeEl.id);
@@ -1766,14 +1762,8 @@ async function callLLMAndUpdate(nodeId, payload, { progressId = null } = {}) {
   ];
 
   try {
-    const response = await fetch('/api/llm/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(enrichedPayload),
-    });
+    const data = await postJson<any>('/api/llm/generate', enrichedPayload);
     updateProgressCard(progressId, { stage: '解析响应', summary: '正在渲染生成节点' });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.detail || data.error || `HTTP ${response.status}`);
 
     node.title = data.title || 'AI 生成节点';
     node.content = data.content || '（模型没有返回内容）';
@@ -2041,7 +2031,7 @@ function annotateMathElement(element, annotation) {
 }
 
 function unwrapMarksForTarget(targetId) {
-  document.querySelectorAll('mark.annotated').forEach((mark) => {
+  document.querySelectorAll<HTMLElement>('mark.annotated').forEach((mark) => {
     if (mark.dataset.refId !== targetId) return;
     const parent = mark.parentNode;
     if (!parent) return;
@@ -2049,7 +2039,7 @@ function unwrapMarksForTarget(targetId) {
     parent.removeChild(mark);
     parent.normalize();
   });
-  document.querySelectorAll('.math-node.annotated-math').forEach((mathEl) => {
+  document.querySelectorAll<HTMLElement>('.math-node.annotated-math').forEach((mathEl) => {
     if (mathEl.dataset.refId !== targetId) return;
     mathEl.classList.remove('annotated-math');
     delete mathEl.dataset.refId;
@@ -2310,17 +2300,18 @@ function downloadFlow() {
 }
 
 function loadFlow(flow) {
+  const normalizedFlow = validateFlow(flow);
   resetGraph();
-  state.flowName = flow.name || flow.rootTitle || '已加载流程图';
-  state.canvas = normalizeCanvas(flow.canvas);
-  state.colorIndex = Number.isFinite(Number(flow.colorIndex)) ? Number(flow.colorIndex) : 0;
-  state.nodes = (flow.nodes || []).map((node) => normalizeNode({ ...node, loading: false }));
-  state.edges = (flow.edges || []).map((edge) => ({
+  state.flowName = normalizedFlow.name || normalizedFlow.rootTitle || '已加载流程图';
+  state.canvas = normalizeCanvas(normalizedFlow.canvas);
+  state.colorIndex = Number.isFinite(Number(normalizedFlow.colorIndex)) ? Number(normalizedFlow.colorIndex) : 0;
+  state.nodes = normalizedFlow.nodes.map((node) => normalizeNode({ ...node, loading: false }));
+  state.edges = normalizedFlow.edges.map((edge) => ({
     id: edge.id || genId('edge'),
     sourceId: edge.sourceId,
     targetId: edge.targetId,
   })).filter((edge) => edge.sourceId && edge.targetId);
-  state.annotations = (flow.annotations || []).map((annotation) => ({
+  state.annotations = normalizedFlow.annotations.map((annotation) => ({
     id: annotation.id || genId('ann'),
     sourceNodeId: annotation.sourceNodeId,
     targetNodeId: annotation.targetNodeId,
@@ -2353,13 +2344,7 @@ async function saveFlowToServer() {
   const name = prompt('请输入服务端保存名称：', state.flowName || '未命名流程图');
   if (!name) return;
   try {
-    const response = await fetch('/api/flows', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, flow: exportFlow() }),
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || data.detail || `HTTP ${response.status}`);
+    const data = await postJson<any>('/api/flows', { name, flow: exportFlow() });
     state.flowName = data.name || name;
     updateFlowName();
     showToast(`已保存到服务端：${state.flowName}`);
@@ -2380,9 +2365,7 @@ function closeServerFlowsModal() {
 async function refreshServerFlows() {
   DOM.serverFlowList.innerHTML = '<p class="muted">正在读取...</p>';
   try {
-    const response = await fetch('/api/flows');
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    const data = await fetchJson<any>('/api/flows');
     const flows = data.flows || [];
     if (flows.length === 0) {
       DOM.serverFlowList.innerHTML = '<p class="muted">服务端还没有保存的流程图。</p>';
@@ -2426,7 +2409,7 @@ async function refreshServerFlows() {
 }
 
 function isFlowObject(value) {
-  return value && typeof value === 'object' && Array.isArray(value.nodes) && Array.isArray(value.edges);
+  return isValidFlowShape(value);
 }
 
 function confirmReplaceGraph() {
@@ -2512,7 +2495,7 @@ function formatBytes(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function createProgressCard({ title, sourceLabel = '批注', sourceText = '', prompt = '', stage = '准备中', summary = '' } = {}) {
+function createProgressCard({ title, sourceLabel = '批注', sourceText = '', prompt = '', stage = '准备中', summary = '' }: any = {}) {
   const id = `progress-${state.progressIdCount++}`;
   const card = document.createElement('article');
   card.id = id;
@@ -2531,7 +2514,7 @@ function createProgressCard({ title, sourceLabel = '批注', sourceText = '', pr
   return id;
 }
 
-function updateProgressCard(id, { title, sourceLabel, sourceText, prompt, stage, summary, done = false, error = false } = {}) {
+function updateProgressCard(id, { title, sourceLabel, sourceText, prompt, stage, summary, done = false, error = false }: any = {}) {
   if (!id) return;
   const card = document.getElementById(id);
   if (!card) return;
@@ -2587,7 +2570,7 @@ const answer = [1, 2, 3].map((n) => n ** 2);
 console.log(answer);
 ~~~
 
-> 后端复用 pi 的模型注册表、凭据和默认模型设置。请在 pi 中用 `/model`、`/settings` 或 `~/.pi/agent/settings.json` 选择模型。
+> 后端复用 pi 的模型注册表、凭据和默认模型设置。请在 pi 中用 \`/model\`、\`/settings\` 或 \`~/.pi/agent/settings.json\` 选择模型。
 
 ## 可以尝试选中这句话
 

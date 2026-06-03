@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RhizoDoc Config",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 3000 },
+        "jsonLimit": { "type": "string", "default": "20mb" }
+      }
+    },
+    "pi": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "provider": { "type": "string", "default": "" },
+        "model": { "type": "string", "default": "" },
+        "thinkingLevel": { "type": "string", "default": "" },
+        "maxTokens": { "type": "integer", "minimum": 1, "maximum": 200000, "default": 12000 }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "flowsDir": { "type": "string", "default": "data/flows" }
+      }
+    }
+  }
+}

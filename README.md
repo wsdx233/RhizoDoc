@@ -1,8 +1,8 @@
 # RhizoDoc
 
-RhizoDoc is a local-first AI document workspace that turns long documents, notes, and prompts into an explorable Markdown DAG (directed acyclic graph). It provides an infinite canvas for reading, annotating, expanding, saving, and loading knowledge nodes, with optional LLM generation through OpenAI Responses or Chat Completions compatible APIs.
+RhizoDoc is a local-first AI document workspace that turns long documents, notes, and prompts into an explorable Markdown DAG (directed acyclic graph). It provides an infinite canvas for reading, annotating, expanding, saving, and loading knowledge nodes, with optional LLM generation through the Pi model registry.
 
-> UI language is currently Chinese. The server and configuration are intentionally lightweight: plain Node.js + Express, no build step required.
+> UI language is currently Chinese. The app uses a Vite + TypeScript browser client and a lightweight Express + TypeScript API server.
 
 ## Features
 
@@ -17,41 +17,49 @@ RhizoDoc is a local-first AI document workspace that turns long documents, notes
 - **Persistence**:
   - download/load flow JSON files in the browser;
   - save/load flow JSON files through the local Node server.
-- **Provider flexibility**: supports OpenAI Responses API, Chat Completions API, and OpenAI-compatible base URLs.
+- **Provider flexibility**: uses Pi's model registry/auth settings by default, with RhizoDoc-specific overrides in `rhizodoc.config.json`.
+- **Runtime validation**: shared browser/server schemas validate config, LLM payloads, and flow JSON.
 
 ## Tech Stack
 
-- Node.js 18+
+- Node.js 20+
+- TypeScript
 - Express 5
-- OpenAI Node SDK
+- Vite 8
+- Vanilla browser ESM
 - marked + DOMPurify
 - Highlight.js + KaTeX
-- Vanilla HTML/CSS/JavaScript
+- Zod
+- Vitest, ESLint, Prettier
 
 ## Quick Start
 
 ```bash
 git clone https://github.com/wsdx233/RhizoDoc.git
 cd RhizoDoc
-npm install
-cp .env.example .env
+pnpm install
 ```
 
-Edit `.env` and add your own API key:
-
-```env
-OPENAI_API_KEY=your-api-key-here
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_MODEL=gpt-4.1
-OPENAI_API_TYPE=responses
-OPENAI_REASONING_EFFORT=
-PORT=3000
-```
-
-Start the app:
+Create a RhizoDoc config file:
 
 ```bash
-npm start
+cp rhizodoc.config.example.json rhizodoc.config.json
+```
+
+Configure your default model in Pi:
+
+```bash
+pi
+# then use /model to select a provider/model and configure credentials
+```
+
+Optionally edit `rhizodoc.config.json` to override the Pi provider/model for this project only.
+
+Start a production-style local server:
+
+```bash
+pnpm build
+pnpm start
 ```
 
 Open:
@@ -60,55 +68,113 @@ Open:
 http://localhost:3000
 ```
 
-For development with Node watch mode:
+For development, run the API server and Vite dev server together:
 
 ```bash
-npm run dev
+pnpm dev
+```
+
+Then open the Vite URL, usually:
+
+```text
+http://localhost:5173
 ```
 
 ## Configuration
 
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `OPENAI_API_KEY` | Yes for LLM features | empty | API key for OpenAI or an OpenAI-compatible provider. |
-| `OPENAI_BASE_URL` | No | `https://api.openai.com/v1` | API base URL. Replace it when using a compatible provider. |
-| `OPENAI_MODEL` | No | `gpt-4.1` | Model used for node generation. |
-| `OPENAI_API_TYPE` | No | `responses` | `responses`, `chat_completions`, or `auto`. |
-| `OPENAI_REASONING_EFFORT` | No | empty | Optional reasoning effort. Leave blank if unsupported by your model/provider. |
-| `PORT` | No | `3000` | Local server port. |
+RhizoDoc uses `rhizodoc.config.json` for app-specific settings. The file is intentionally ignored by Git; commit `rhizodoc.config.example.json` instead.
 
-RhizoDoc asks the model to return plain text where the first line is the node title and the remaining lines are Markdown content. If a provider does not support reasoning parameters, RhizoDoc retries without them automatically.
+```json
+{
+  "$schema": "./src/shared/config.schema.json",
+  "server": {
+    "port": 3000,
+    "jsonLimit": "20mb"
+  },
+  "pi": {
+    "provider": "",
+    "model": "",
+    "thinkingLevel": "off",
+    "maxTokens": 12000
+  },
+  "storage": {
+    "flowsDir": "data/flows"
+  }
+}
+```
+
+| Field | Default | Description |
+| --- | --- | --- |
+| `server.port` | `3000` | Express server port. Can also be overridden by `--port`. |
+| `server.jsonLimit` | `20mb` | JSON request body limit. |
+| `pi.provider` | Pi default provider | Optional project-only Pi provider override. Empty string means use Pi default. |
+| `pi.model` | Pi default model | Optional project-only Pi model override. Empty string means use Pi default. |
+| `pi.thinkingLevel` | Pi default thinking level or `off` | Thinking/reasoning level passed to compatible models. |
+| `pi.maxTokens` | `12000` | Max output tokens requested from the model, capped by model settings. |
+| `storage.flowsDir` | `data/flows` | Directory for server-saved flow JSON files. Relative paths resolve from the project root. |
+
+CLI options use Node's built-in `node:util.parseArgs`:
+
+```bash
+pnpm start -- --port 3003
+pnpm start -- --config ./my.rhizodoc.json
+```
+
+RhizoDoc asks the model to return plain text where the first line is the node title and the remaining lines are Markdown content.
 
 ## Project Structure
 
 ```text
 .
-├── public/              # Main browser app
-│   ├── index.html
-│   ├── app.js
-│   └── styles.css
-├── prototype/           # Earlier standalone UI prototypes
-├── data/flows/          # Local server-saved flow JSON files (ignored by Git)
-├── server.js            # Express server + LLM/flow APIs
+├── index.html                    # Vite HTML entry
+├── src/
+│   ├── client/                   # Browser app modules
+│   │   ├── main.ts
+│   │   ├── api.ts
+│   │   └── styles.css
+│   ├── shared/                   # Browser/server shared schemas and types
+│   │   ├── config.ts
+│   │   ├── config.schema.json
+│   │   ├── schemas.ts
+│   │   ├── schemas.test.ts
+│   │   └── types.ts
+│   └── vite-env.d.ts
+├── prototype/                    # Earlier standalone UI prototypes
+├── data/flows/                   # Local server-saved flow JSON files (ignored by Git)
+├── dist/                         # Vite build output (ignored by Git)
+├── server.ts                     # Express server + LLM/flow APIs
+├── rhizodoc.config.example.json  # Commit-safe example config
+├── rhizodoc.config.json          # Local config (ignored by Git)
+├── tsconfig.json
+├── vite.config.js
+├── eslint.config.js
+├── pnpm-workspace.yaml
 ├── package.json
-├── .env.example         # Safe example configuration
 └── .gitignore
 ```
 
 ## Privacy and Security
 
-- Real API keys belong in `.env` only.
-- `.env`, `.env.*`, `node_modules/`, logs, and local generated flow JSON files are ignored by Git.
-- `.env.example` is safe to commit and contains placeholders only.
+- Real API keys should stay in Pi auth storage or other local secret storage only.
+- `rhizodoc.config.json`, `.env`, `.env.*`, `node_modules/`, `dist/`, logs, and local generated flow JSON files are ignored by Git.
 - Browser-opened local documents are read in the browser. Server-saved flows are written under `data/flows/` and are treated as local runtime data.
 
 ## Useful Scripts
 
 ```bash
-npm start     # start the server
-npm run dev   # start with node --watch
+pnpm start       # start Express; requires pnpm build for the browser client
+pnpm dev         # run Express API + Vite dev server
+pnpm dev:api     # API server only
+pnpm dev:web     # Vite dev server only
+pnpm build       # production client build into dist/
+pnpm preview     # build, then serve with Express
+pnpm typecheck   # run TypeScript checks
+pnpm test        # run Vitest tests
+pnpm lint        # run ESLint
+pnpm format      # run Prettier
+pnpm check       # typecheck + lint + test + build
 ```
 
 ## Notes
 
-RhizoDoc is designed as a lightweight research/document exploration tool. It is suitable for local experimentation, knowledge mapping, and iterative document expansion workflows.
+RhizoDoc is designed as a local-first research/document exploration tool. It is suitable for local experimentation, knowledge mapping, and iterative document expansion workflows.
