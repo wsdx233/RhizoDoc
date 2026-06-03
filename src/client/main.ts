@@ -53,6 +53,7 @@ const state: any = {
   annotations: [],
   colorIndex: 0,
   currentSelection: { text: '', parentNodeId: null, start: 0, length: 0, source: 'node' },
+  isNativeTextSelecting: false,
   deferredRenderNodeIds: new Set(),
   keepTooltipAfterSelectionClear: false,
   contextNodeId: null,
@@ -125,11 +126,19 @@ function bindEvents() {
   window.addEventListener('mousemove', onWindowMouseMove);
   window.addEventListener('mouseup', onWindowMouseUp);
   document.addEventListener('mouseup', (event) => {
-    if (shouldLockNativeSelectionMenu()) {
+    const wasNativeTextSelecting = state.isNativeTextSelecting;
+    if (!wasNativeTextSelecting && shouldLockNativeSelectionMenu()) {
       event.preventDefault();
       lockNativeSelectionMenu();
     }
-    setTimeout(lockNativeSelectionMenu, 0);
+    setTimeout(() => {
+      if (wasNativeTextSelecting) {
+        state.isNativeTextSelecting = false;
+        handleSelection();
+        return;
+      }
+      lockNativeSelectionMenu();
+    }, 0);
   }, true);
   DOM.viewport.addEventListener('wheel', onViewportWheel, { passive: false });
   window.addEventListener('resize', () => {
@@ -139,9 +148,16 @@ function bindEvents() {
 
   document.addEventListener('selectionchange', handleSelection);
   document.addEventListener('mousedown', (event) => {
-    if (!(event.target as Element).closest('#action-tooltip') && (event.target as Element).closest('.node-content, .fs-content')) hideTooltip();
-    if (!(event.target as Element).closest('#action-tooltip') && !(event.target as Element).closest('.node') && !(event.target as Element).closest('.fullscreen-container')) hideTooltip();
-    if (!(event.target as Element).closest('.context-menu')) hideMenus();
+    const target = event.target as Element;
+    state.isNativeTextSelecting = event.button === 0
+      && !state.isMoveMode
+      && !state.isMultiSelectMode
+      && Boolean(target.closest('.node-content, .fs-content'));
+    if (!target.closest('#action-tooltip') && target.closest('.node-content, .fs-content')) {
+      hideTooltip({ preserveNativeSelection: state.isNativeTextSelecting });
+    }
+    if (!target.closest('#action-tooltip') && !target.closest('.node') && !target.closest('.fullscreen-container')) hideTooltip();
+    if (!target.closest('.context-menu')) hideMenus();
   });
 
   DOM.tooltipView.addEventListener('click', () => {
@@ -155,7 +171,7 @@ function bindEvents() {
     if (event.key === 'Escape') hideTooltip();
   });
   byId('btn-confirm').addEventListener('click', triggerSelectionLLM);
-  byId('btn-cancel').addEventListener('click', hideTooltip);
+  byId('btn-cancel').addEventListener('click', () => hideTooltip());
 
   DOM.viewport.addEventListener('contextmenu', onContextMenu);
   byId('menu-fullscreen').addEventListener('click', () => {
@@ -1132,10 +1148,12 @@ function handleSelection() {
   const selection = window.getSelection();
   const rawText = selection?.toString() || '';
   if (!selection || selection.rangeCount === 0 || rawText.trim().length === 0) {
+    if (state.isNativeTextSelecting) return;
     if (state.keepTooltipAfterSelectionClear) {
       state.keepTooltipAfterSelectionClear = false;
       return;
     }
+    if (DOM.tooltip.style.display === 'flex') return;
     if (!DOM.tooltip.classList.contains('focus')) hideTooltip();
     return;
   }
@@ -1159,6 +1177,8 @@ function handleSelection() {
     length: logicalSelection.length,
     source: fsSourceId ? 'fullscreen' : 'node',
   };
+
+  if (state.isNativeTextSelecting) return;
 
   const rect = range.getBoundingClientRect();
   DOM.tooltip.style.display = 'flex';
@@ -1371,12 +1391,13 @@ function rangeIntersectsNode(range, node) {
   }
 }
 
-function hideTooltip() {
+function hideTooltip({ preserveNativeSelection = false } = {}) {
   const deferredNodeId = state.currentSelection?.parentNodeId || null;
+  if (!preserveNativeSelection) state.isNativeTextSelecting = false;
   clearTemporarySelection();
   DOM.tooltip.style.display = 'none';
   DOM.tooltip.classList.remove('focus');
-  window.getSelection()?.removeAllRanges();
+  if (!preserveNativeSelection) window.getSelection()?.removeAllRanges();
   state.currentSelection = { text: '', parentNodeId: null, start: 0, length: 0, source: 'node' };
   flushDeferredNodeRender(deferredNodeId, { force: true });
 }
