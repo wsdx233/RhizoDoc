@@ -198,8 +198,10 @@ function buildInstructions() {
   return [
     '你是一个严谨的中文知识图谱/文档研究助手。',
     '你的任务是为无限画布 DAG 生成一个新的节点（也可以是第一张根文档节点）。',
-    '必须输出 JSON：{"title":"短标题","content":"Markdown 正文"}，不要输出 JSON 之外的任何文字。',
-    'content 必须是高质量 Markdown，可使用二级/三级标题、要点列表、引用、表格、代码块和 LaTeX 公式。',
+    '输出格式必须是纯文本，不要输出 JSON、XML、YAML、代码围栏或额外说明。',
+    '第一行必须是节点短标题，尽量不超过 18 个汉字；不要加“标题：”前缀，也不要使用 Markdown 标题符号。',
+    '从第二行开始是节点 Markdown 正文；服务端会按第一个换行把第一行拆为 title，其余内容拆为 content。',
+    '正文必须是高质量 Markdown，可使用二级/三级标题、要点列表、引用、表格、代码块和 LaTeX 公式。',
     '除非用户明确要求，不要大段复述原文；应基于原文进行解释、扩展、拆解、追问或生成下一步。',
     '如果上下文不足，请明确说明你的假设，并给出可执行的下一步。',
   ].join('\n');
@@ -222,7 +224,7 @@ function buildLLMInput(payload) {
     payload.selectedText ? `\n【选中文本】\n${payload.selectedText}` : '',
     payload.parentContent ? `\n【来源节点 Markdown 内容】\n${payload.parentContent}` : '',
     payload.graphSummary ? `\n【当前流程图摘要】\n${payload.graphSummary}` : '',
-    '\n请返回适合直接渲染为一个画布节点的 JSON。title 要短，content 用中文 Markdown。',
+    '\n请返回适合直接渲染为一个画布节点的纯文本：第一行是短标题，第二行起是中文 Markdown 正文。不要返回 JSON。',
   ].filter(Boolean).join('\n');
 }
 
@@ -285,33 +287,25 @@ async function createChatCompletionNode({ instructions, input }) {
 }
 
 async function callResponsesWithFallback(baseRequest) {
-  const variants = [withResponseJsonSchema(baseRequest)];
-  let noReasoningRequest = null;
+  const variants = [baseRequest];
 
   if (baseRequest.reasoning) {
-    noReasoningRequest = { ...baseRequest };
+    const noReasoningRequest = { ...baseRequest };
     delete noReasoningRequest.reasoning;
-    variants.push(withResponseJsonSchema(noReasoningRequest));
+    variants.push(noReasoningRequest);
   }
-  variants.push(baseRequest);
-  if (noReasoningRequest) variants.push(noReasoningRequest);
 
   return tryRequestVariants(variants, (request) => openai.responses.create(request));
 }
 
 async function callChatCompletionsWithFallback(baseRequest) {
-  const variants = [withChatJsonSchema(baseRequest)];
-  let noReasoningRequest = null;
+  const variants = [baseRequest];
 
   if (baseRequest.reasoning_effort) {
-    noReasoningRequest = { ...baseRequest };
+    const noReasoningRequest = { ...baseRequest };
     delete noReasoningRequest.reasoning_effort;
-    variants.push(withChatJsonSchema(noReasoningRequest));
+    variants.push(noReasoningRequest);
   }
-  variants.push(withChatJsonObject(baseRequest));
-  if (noReasoningRequest) variants.push(withChatJsonObject(noReasoningRequest));
-  variants.push(baseRequest);
-  if (noReasoningRequest) variants.push(noReasoningRequest);
 
   return tryRequestVariants(variants, (request) => openai.chat.completions.create(request));
 }
@@ -327,65 +321,6 @@ async function tryRequestVariants(variants, requester) {
     }
   }
   throw lastError;
-}
-
-function withResponseJsonSchema(baseRequest) {
-  return {
-    ...baseRequest,
-    text: { format: buildResponseTextFormat() },
-  };
-}
-
-function withChatJsonSchema(baseRequest) {
-  return {
-    ...baseRequest,
-    response_format: buildChatResponseFormat(),
-  };
-}
-
-function withChatJsonObject(baseRequest) {
-  return {
-    ...baseRequest,
-    response_format: { type: 'json_object' },
-  };
-}
-
-function buildResponseTextFormat() {
-  return {
-    type: 'json_schema',
-    name: 'flow_node_generation',
-    strict: true,
-    schema: buildGenerationJsonSchema(),
-  };
-}
-
-function buildChatResponseFormat() {
-  return {
-    type: 'json_schema',
-    json_schema: {
-      name: 'flow_node_generation',
-      strict: true,
-      schema: buildGenerationJsonSchema(),
-    },
-  };
-}
-
-function buildGenerationJsonSchema() {
-  return {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      title: {
-        type: 'string',
-        description: '适合作为画布节点标题的短标题，尽量不超过 18 个汉字。',
-      },
-      content: {
-        type: 'string',
-        description: 'Markdown 正文。可以包含标题、列表、引用、表格和代码块。',
-      },
-    },
-    required: ['title', 'content'],
-  };
 }
 
 function extractResponseText(response) {
@@ -421,59 +356,46 @@ function extractChatCompletionText(response) {
 }
 
 function normalizeGeneratedNode(outputText, payload) {
-  const parsed = parseJsonFromText(outputText);
-  if (parsed && typeof parsed === 'object') {
-    const title = clampText(String(parsed.title || '').trim() || 'AI 生成节点', 80);
-    const content = String(parsed.content || '').trim() || outputText || '（模型没有返回内容）';
-    return { title, content };
+  const text = String(outputText || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  const fallbackTitle = getFallbackGeneratedTitle(text, payload);
+
+  if (!text) {
+    return {
+      title: clampText(fallbackTitle, 80),
+      content: '（模型没有返回内容）',
+    };
   }
 
-  const text = String(outputText || '').trim();
-  const firstHeading = text.match(/^#{1,3}\s+(.+)$/m)?.[1]?.trim();
-  const fallbackTitle = firstHeading || (payload.userPrompt ? payload.userPrompt.slice(0, 24) : 'AI 生成节点');
+  const firstNewlineIndex = text.indexOf('\n');
+  if (firstNewlineIndex >= 0) {
+    const rawTitle = text.slice(0, firstNewlineIndex).trim();
+    const content = text.slice(firstNewlineIndex + 1).trim();
+    return {
+      title: clampText(cleanGeneratedTitle(rawTitle) || fallbackTitle, 80),
+      content: content || '（模型没有返回正文）',
+    };
+  }
+
   return {
-    title: clampText(fallbackTitle, 80),
-    content: text || '（模型没有返回内容）',
+    title: clampText(cleanGeneratedTitle(text) || fallbackTitle, 80),
+    content: text,
   };
 }
 
-function parseJsonFromText(text) {
-  if (!text) return null;
-  const variants = [
-    text.trim(),
-    text.replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim(),
-  ];
+function getFallbackGeneratedTitle(text, payload) {
+  const firstHeading = text.match(/^#{1,3}\s+(.+)$/m)?.[1]?.trim();
+  return firstHeading || (payload.userPrompt ? payload.userPrompt.slice(0, 24) : 'AI 生成节点');
+}
 
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenced) variants.push(fenced[1].trim());
-
-  const objectMatch = text.match(/\{[\s\S]*\}/);
-  if (objectMatch) variants.push(objectMatch[0]);
-
-  for (const value of variants) {
-    try {
-      return JSON.parse(value);
-    } catch {
-      // try next variant
-    }
-  }
-  return null;
+function cleanGeneratedTitle(value) {
+  return String(value || '')
+    .replace(/^#{1,6}\s+/, '')
+    .replace(/^标题[:：]\s*/i, '')
+    .trim();
 }
 
 function isRetryableGenerationRequestError(error) {
-  return isProbablyStructuredOutputError(error) || isProbablyReasoningEffortError(error);
-}
-
-function isProbablyStructuredOutputError(error) {
-  const message = errorMessage(error).toLowerCase();
-  return [400, 422].includes(Number(error?.status)) && (
-    message.includes('text.format') ||
-    message.includes('json_schema') ||
-    message.includes('json_object') ||
-    message.includes('response_format') ||
-    message.includes('structured output') ||
-    message.includes('format')
-  );
+  return isProbablyReasoningEffortError(error);
 }
 
 function isProbablyReasoningEffortError(error) {

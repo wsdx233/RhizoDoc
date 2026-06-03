@@ -77,7 +77,7 @@ npm run dev
 | `OPENAI_REASONING_EFFORT` | No | empty | Optional reasoning effort. Leave blank if unsupported by your model/provider. |
 | `PORT` | No | `3000` | Local server port. |
 
-If a provider does not support strict JSON schema output or reasoning parameters, RhizoDoc attempts fallback request formats automatically.
+RhizoDoc asks the model to return plain text where the first line is the node title and the remaining lines are Markdown content. If a provider does not support reasoning parameters, RhizoDoc retries without them automatically.
 
 ## Project Structure
 
