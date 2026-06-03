@@ -1,11 +1,10 @@
-import 'dotenv/config';
-
 import express from 'express';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import OpenAI from 'openai';
+import { completeSimple } from '@earendil-works/pi-ai';
+import { AuthStorage, getAgentDir, ModelRegistry, SettingsManager } from '@earendil-works/pi-coding-agent';
 
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -15,16 +14,11 @@ const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const FLOWS_DIR = path.join(__dirname, 'data', 'flows');
-
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.API_KEY || process.env.APIKEY || process.env.apikey || process.env.apiKey || '';
-const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1';
-const OPENAI_API_TYPE = normalizeOpenAIApiType(process.env.OPENAI_API_TYPE || process.env.OPENAI_REQUEST_TYPE || process.env.API_TYPE || 'responses');
-const OPENAI_REASONING_EFFORT = process.env.OPENAI_REASONING_EFFORT || '';
-
-const openai = OPENAI_API_KEY
-  ? new OpenAI({ apiKey: OPENAI_API_KEY, baseURL: OPENAI_BASE_URL })
-  : null;
+const AGENT_DIR = getAgentDir();
+const authStorage = AuthStorage.create(path.join(AGENT_DIR, 'auth.json'));
+const modelRegistry = ModelRegistry.create(authStorage, path.join(AGENT_DIR, 'models.json'));
+const settingsManager = SettingsManager.create(__dirname, AGENT_DIR);
+const DEFAULT_MAX_TOKENS = Number(process.env.RHIZODOC_MAX_TOKENS || 12000);
 
 await fs.mkdir(FLOWS_DIR, { recursive: true });
 
@@ -48,26 +42,24 @@ app.get('/vendor/purify.es.mjs', (_req, res) => {
 app.use('/vendor/highlight', express.static(path.dirname(require.resolve('@highlightjs/cdn-assets/package.json'))));
 app.use('/vendor/katex', express.static(path.dirname(require.resolve('katex/package.json'))));
 
-app.get('/api/config', (_req, res) => {
+app.get('/api/config', async (_req, res) => {
+  const config = await getPiModelConfig();
   res.json({
     ok: true,
-    hasApiKey: Boolean(OPENAI_API_KEY),
-    baseURL: OPENAI_BASE_URL,
-    model: OPENAI_MODEL,
-    apiType: OPENAI_API_TYPE,
-    reasoningEffort: OPENAI_REASONING_EFFORT,
+    provider: config.provider,
+    model: config.model?.id || config.modelId || '',
+    modelName: config.model?.name || config.model?.id || config.modelId || '',
+    apiType: config.model?.api || 'pi',
+    reasoningEffort: config.thinkingLevel || 'off',
+    ready: config.ready,
+    hasApiKey: config.ready,
+    authStatus: config.authStatus,
+    configSource: 'pi',
+    error: config.error || null,
   });
 });
 
 app.post('/api/llm/generate', async (req, res) => {
-  if (!openai) {
-    res.status(400).json({
-      error: '缺少 OPENAI_API_KEY',
-      detail: '请在 .env 中设置 OPENAI_API_KEY 后重启服务。',
-    });
-    return;
-  }
-
   try {
     const payload = normalizeLLMPayload(req.body || {});
     const llmResult = await requestLLMNode(payload);
@@ -79,19 +71,19 @@ app.post('/api/llm/generate', async (req, res) => {
       content: generated.content,
       raw: llmResult.outputText,
       usage: llmResult.usage || null,
-      model: llmResult.model || OPENAI_MODEL,
-      apiType: llmResult.apiType || OPENAI_API_TYPE,
-      reasoningEffort: OPENAI_REASONING_EFFORT,
+      model: llmResult.model,
+      apiType: llmResult.apiType,
+      reasoningEffort: llmResult.reasoningEffort,
     });
   } catch (error) {
     console.error('[LLM Error]', error);
     res.status(error.status || 500).json({
       error: 'LLM 调用失败',
       detail: error.message || String(error),
-      baseURL: OPENAI_BASE_URL,
-      model: OPENAI_MODEL,
-      apiType: OPENAI_API_TYPE,
-      reasoningEffort: OPENAI_REASONING_EFFORT,
+      provider: error.provider,
+      model: error.model,
+      apiType: error.apiType,
+      reasoningEffort: error.reasoningEffort,
     });
   }
 });
@@ -164,26 +156,13 @@ app.use((req, res, next) => {
   next();
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`RhizoDoc 已启动: http://localhost:${PORT}`);
-  console.log(`OpenAI API baseURL: ${OPENAI_BASE_URL}`);
-  console.log(`API type: ${OPENAI_API_TYPE}, model: ${OPENAI_MODEL}, reasoning effort: ${OPENAI_REASONING_EFFORT}`);
-  if (!OPENAI_API_KEY) console.warn('警告: 未设置 OPENAI_API_KEY，LLM 功能将不可用。');
+  console.log(`Pi agent dir: ${AGENT_DIR}`);
+  const config = await getPiModelConfig();
+  console.log(`Pi model: ${config.provider}/${config.modelId}, thinking: ${config.thinkingLevel || 'off'}`);
+  if (!config.ready) console.warn(`警告: Pi 模型不可用：${config.error || '未配置模型凭据'}`);
 });
-
-function normalizeOpenAIApiType(value) {
-  const normalized = String(value || 'responses')
-    .trim()
-    .toLowerCase()
-    .replace(/[.\s-]+/g, '_');
-
-  if (['response', 'responses', 'responses_api'].includes(normalized)) return 'responses';
-  if (['chat', 'chat_completion', 'chat_completions', 'chatcompletion', 'chatcompletions', 'chat_competition', 'chat_competitions', 'completion', 'completions'].includes(normalized)) {
-    return 'chat_completions';
-  }
-  if (normalized === 'auto') return 'auto';
-  return 'responses';
-}
 
 function normalizeLLMPayload(raw) {
   return {
@@ -194,7 +173,7 @@ function normalizeLLMPayload(raw) {
     parentContent: clampText(raw.parentContent || '', 18000),
     rootTitle: clampText(raw.rootTitle || '', 200),
     graphSummary: clampText(raw.graphSummary || '', 8000),
-    apiType: raw.apiType ? normalizeOpenAIApiType(raw.apiType) : '',
+    apiType: '',
   };
 }
 
@@ -235,128 +214,100 @@ function buildLLMInput(payload) {
 async function requestLLMNode(payload) {
   const instructions = buildInstructions();
   const input = buildLLMInput(payload);
-  const apiType = payload.apiType || OPENAI_API_TYPE;
-
-  if (apiType === 'chat_completions') {
-    return createChatCompletionNode({ instructions, input });
-  }
-
-  if (apiType === 'auto') {
-    try {
-      return await createResponsesNode({ instructions, input });
-    } catch (error) {
-      if (!isProbablyResponsesApiUnsupportedError(error)) throw error;
-      console.warn('[LLM] Responses API 不可用，自动切换到 Chat Completions:', error.message || String(error));
-      return createChatCompletionNode({ instructions, input });
-    }
-  }
-
-  return createResponsesNode({ instructions, input });
+  return createPiNode({ instructions, input });
 }
 
-async function createResponsesNode({ instructions, input }) {
-  const baseRequest = {
-    model: OPENAI_MODEL,
-    instructions,
-    input,
-  };
-  if (OPENAI_REASONING_EFFORT) baseRequest.reasoning = { effort: OPENAI_REASONING_EFFORT };
+async function createPiNode({ instructions, input }) {
+  const config = await getPiModelConfig();
+  if (!config.ready) {
+    const error = new Error(config.error || 'Pi 模型未配置或缺少凭据。请使用 pi /model 或 pi-ai login 配置模型。');
+    error.status = 400;
+    error.provider = config.provider;
+    error.model = config.modelId;
+    error.apiType = 'pi';
+    error.reasoningEffort = config.thinkingLevel || 'off';
+    throw error;
+  }
 
-  const response = await callResponsesWithFallback(baseRequest);
+  const retrySettings = settingsManager.getProviderRetrySettings();
+  const response = await completeSimple(config.model, {
+    systemPrompt: instructions,
+    messages: [{ role: 'user', content: input, timestamp: Date.now() }],
+  }, {
+    apiKey: config.apiKey,
+    headers: config.headers,
+    reasoning: config.thinkingLevel === 'off' ? undefined : config.thinkingLevel,
+    maxTokens: Math.min(DEFAULT_MAX_TOKENS, config.model.maxTokens || DEFAULT_MAX_TOKENS),
+    timeoutMs: retrySettings.timeoutMs,
+    maxRetries: retrySettings.maxRetries,
+    maxRetryDelayMs: retrySettings.maxRetryDelayMs,
+  });
+
   return {
-    outputText: extractResponseText(response),
+    outputText: extractPiText(response),
     usage: response.usage || null,
-    model: response.model || OPENAI_MODEL,
-    apiType: 'responses',
+    model: `${config.model.provider}/${response.responseModel || response.model || config.model.id}`,
+    apiType: response.api || config.model.api || 'pi',
+    reasoningEffort: config.thinkingLevel || 'off',
   };
 }
 
-async function createChatCompletionNode({ instructions, input }) {
-  const baseRequest = {
-    model: OPENAI_MODEL,
-    messages: [
-      { role: 'system', content: instructions },
-      { role: 'user', content: input },
-    ],
-  };
-  if (OPENAI_REASONING_EFFORT) baseRequest.reasoning_effort = OPENAI_REASONING_EFFORT;
+async function getPiModelConfig() {
+  await settingsManager.reload();
+  authStorage.reload();
+  modelRegistry.refresh();
 
-  const response = await callChatCompletionsWithFallback(baseRequest);
+  const provider = process.env.RHIZODOC_PI_PROVIDER || settingsManager.getDefaultProvider();
+  const modelId = process.env.RHIZODOC_PI_MODEL || settingsManager.getDefaultModel();
+  const thinkingLevel = process.env.RHIZODOC_THINKING_LEVEL || settingsManager.getDefaultThinkingLevel() || 'off';
+
+  if (!provider || !modelId) {
+    return {
+      ready: false,
+      provider: provider || '',
+      modelId: modelId || '',
+      thinkingLevel,
+      authStatus: { configured: false },
+      error: `未设置 Pi 默认模型。请运行 pi 后通过 /model 选择模型，或编辑 ${path.join(AGENT_DIR, 'settings.json')}。`,
+    };
+  }
+
+  const model = modelRegistry.find(provider, modelId);
+  const authStatus = modelRegistry.getProviderAuthStatus(provider);
+  if (!model) {
+    return {
+      ready: false,
+      provider,
+      modelId,
+      thinkingLevel,
+      authStatus,
+      error: `Pi 模型不存在：${provider}/${modelId}。请检查 ${path.join(AGENT_DIR, 'models.json')} 或 /model 配置。`,
+    };
+  }
+
+  const resolvedAuth = await modelRegistry.getApiKeyAndHeaders(model);
+  if (!resolvedAuth.ok) {
+    return { ready: false, provider, modelId, model, thinkingLevel, authStatus, error: resolvedAuth.error };
+  }
+
   return {
-    outputText: extractChatCompletionText(response),
-    usage: response.usage || null,
-    model: response.model || OPENAI_MODEL,
-    apiType: 'chat_completions',
+    ready: true,
+    provider,
+    modelId,
+    model,
+    thinkingLevel,
+    authStatus,
+    apiKey: resolvedAuth.apiKey,
+    headers: resolvedAuth.headers,
   };
 }
 
-async function callResponsesWithFallback(baseRequest) {
-  const variants = [baseRequest];
-
-  if (baseRequest.reasoning) {
-    const noReasoningRequest = { ...baseRequest };
-    delete noReasoningRequest.reasoning;
-    variants.push(noReasoningRequest);
-  }
-
-  return tryRequestVariants(variants, (request) => openai.responses.create(request));
-}
-
-async function callChatCompletionsWithFallback(baseRequest) {
-  const variants = [baseRequest];
-
-  if (baseRequest.reasoning_effort) {
-    const noReasoningRequest = { ...baseRequest };
-    delete noReasoningRequest.reasoning_effort;
-    variants.push(noReasoningRequest);
-  }
-
-  return tryRequestVariants(variants, (request) => openai.chat.completions.create(request));
-}
-
-async function tryRequestVariants(variants, requester) {
-  let lastError;
-  for (const request of variants) {
-    try {
-      return await requester(request);
-    } catch (error) {
-      lastError = error;
-      if (!isRetryableGenerationRequestError(error)) throw error;
-    }
-  }
-  throw lastError;
-}
-
-function extractResponseText(response) {
-  if (!response) return '';
-  if (typeof response.output_text === 'string' && response.output_text.trim()) return response.output_text;
-
-  const chunks = [];
-  for (const item of response.output || []) {
-    for (const content of item.content || []) {
-      if (typeof content.text === 'string') chunks.push(content.text);
-      if (typeof content.output_text === 'string') chunks.push(content.output_text);
-      if (content.type === 'output_text' && typeof content.text === 'string') chunks.push(content.text);
-    }
-  }
-  return chunks.join('\n').trim();
-}
-
-function extractChatCompletionText(response) {
-  const message = response?.choices?.[0]?.message;
-  const content = message?.content;
-  if (typeof content === 'string') return content.trim();
-
-  if (Array.isArray(content)) {
-    return content.map((part) => {
-      if (typeof part === 'string') return part;
-      if (typeof part?.text === 'string') return part.text;
-      if (typeof part?.content === 'string') return part.content;
-      return '';
-    }).filter(Boolean).join('\n').trim();
-  }
-
-  return '';
+function extractPiText(response) {
+  return (response?.content || [])
+    .filter((part) => part?.type === 'text' && typeof part.text === 'string')
+    .map((part) => part.text)
+    .join('\n')
+    .trim();
 }
 
 function normalizeGeneratedNode(outputText, payload) {
@@ -398,34 +349,6 @@ function cleanGeneratedTitle(value) {
     .trim();
 }
 
-function isRetryableGenerationRequestError(error) {
-  return isProbablyReasoningEffortError(error);
-}
-
-function isProbablyReasoningEffortError(error) {
-  const message = errorMessage(error).toLowerCase();
-  return [400, 422].includes(Number(error?.status)) && (
-    message.includes('reasoning.effort') ||
-    message.includes('reasoning_effort') ||
-    message.includes('reasoning') ||
-    message.includes('xhigh')
-  );
-}
-
-function isProbablyResponsesApiUnsupportedError(error) {
-  const status = Number(error?.status);
-  const message = errorMessage(error).toLowerCase();
-  if ([404, 405].includes(status)) return true;
-  return status === 400 && (
-    message.includes('/responses') ||
-    message.includes('responses api') ||
-    message.includes('responses') ||
-    message.includes('not found') ||
-    message.includes('unsupported endpoint') ||
-    message.includes('unknown endpoint') ||
-    message.includes('method not allowed')
-  );
-}
 
 function errorMessage(error) {
   return [

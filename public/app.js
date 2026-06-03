@@ -272,19 +272,19 @@ async function loadAppConfig() {
     const response = await fetch('/api/config');
     const config = await response.json();
     state.appConfig = config;
-    if (config.hasApiKey) {
+    if (config.ready || config.hasApiKey) {
       DOM.apiStatus.className = 'status-cluster ok';
       DOM.apiStatus.innerHTML = [
         '<span class="status-chip ready-chip"><svg class="status-fan status-fan-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" aria-hidden="true"><path d="M480-480q0-91 64.5-155.5T700-700q91 0 155.5 64.5T920-480H480ZM104.5-324.5Q40-389 40-480h440q0 91-64.5 155.5T260-260q-91 0-155.5-64.5ZM480-480q-91 0-155.5-64.5T260-700q0-91 64.5-155.5T480-920v440Zm0 440v-440q91 0 155.5 64.5T700-260q0 91-64.5 155.5T480-40Z"/></svg>就绪</span>',
-        `<span class="status-chip" title="API 类型"><span class="material-symbols-outlined">hub</span>${escapeHtml(formatApiType(config.apiType))}</span>`,
-        `<span class="status-chip" title="模型"><span class="material-symbols-outlined">deployed_code</span>${escapeHtml(config.model || '未设置模型')}</span>`,
-        `<span class="status-chip" title="Reasoning Effort"><span class="material-symbols-outlined">psychology_alt</span>${escapeHtml(config.reasoningEffort || 'default')}</span>`,
+        `<span class="status-chip" title="Pi Provider"><span class="material-symbols-outlined">hub</span>${escapeHtml(config.provider || 'pi')}</span>`,
+        `<span class="status-chip" title="模型"><span class="material-symbols-outlined">deployed_code</span>${escapeHtml(config.modelName || config.model || '未设置模型')}</span>`,
+        `<span class="status-chip" title="Thinking"><span class="material-symbols-outlined">psychology_alt</span>${escapeHtml(config.reasoningEffort || 'off')}</span>`,
       ].join('');
     } else {
       DOM.apiStatus.className = 'status-cluster warn';
       DOM.apiStatus.innerHTML = [
         '<span class="status-chip ready-chip"><span class="material-symbols-outlined">warning</span>未配置</span>',
-        '<span class="status-chip"><span class="material-symbols-outlined">key_off</span>缺少 API Key</span>',
+        `<span class="status-chip" title="${escapeHtml(config.error || '请在 pi 中配置默认模型和凭据')}"><span class="material-symbols-outlined">settings</span>Pi 模型未就绪</span>`,
       ].join('');
     }
   } catch (error) {
@@ -348,8 +348,8 @@ async function generateInitialDocument() {
     DOM.initialGeneratePrompt.focus();
     return;
   }
-  if (state.appConfig && !state.appConfig.hasApiKey) {
-    showToast('请先在 .env 中配置 OPENAI_API_KEY 并重启服务');
+  if (state.appConfig && !(state.appConfig.ready || state.appConfig.hasApiKey)) {
+    showToast('请先在 pi 中配置默认模型和凭据');
     return;
   }
   if (state.nodes.length > 0 && !confirmReplaceGraph()) return;
@@ -1796,7 +1796,7 @@ async function callLLMAndUpdate(nodeId, payload, { progressId = null } = {}) {
     node.content = [
       '> LLM 调用失败。',
       '',
-      '请检查 `.env` 中的 `OPENAI_API_KEY`、`OPENAI_MODEL`，以及服务端控制台错误。',
+      '请检查 pi 默认模型、凭据配置，以及服务端控制台错误。',
       '',
       '```text',
       codeFenceText(error.message || String(error)),
@@ -2498,10 +2498,11 @@ function codeFenceText(value) {
 }
 
 function formatApiType(apiType) {
-  if (apiType === 'chat_completions') return 'Chat Completions';
-  if (apiType === 'responses') return 'Responses';
-  if (apiType === 'auto') return 'Auto';
-  return apiType || 'API';
+  if (apiType === 'anthropic-messages') return 'Anthropic Messages';
+  if (apiType === 'openai-completions') return 'OpenAI Completions';
+  if (apiType === 'openai-responses') return 'OpenAI Responses';
+  if (apiType === 'google-generative-ai') return 'Google Generative AI';
+  return apiType || 'Pi';
 }
 
 function formatBytes(bytes) {
@@ -2586,7 +2587,7 @@ const answer = [1, 2, 3].map((n) => n ** 2);
 console.log(answer);
 ~~~
 
-> 后端支持 OpenAI Responses / Chat Completions API。默认 base URL 为 \`https://api.openai.com/v1\`，也可以在项目根目录的 \`.env\` 中配置兼容 OpenAI 的服务、模型名称和 reasoning effort。
+> 后端复用 pi 的模型注册表、凭据和默认模型设置。请在 pi 中用 `/model`、`/settings` 或 `~/.pi/agent/settings.json` 选择模型。
 
 ## 可以尝试选中这句话
 
