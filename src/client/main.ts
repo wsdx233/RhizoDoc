@@ -1,6 +1,7 @@
 import './styles.css';
 import { fetchJson, postJson } from './api.js';
 import { postProcessNodeContent, renderMarkdown } from './markdown.js';
+import { createProgressCard as createProgressCardElement, showToast as showToastMessage, updateProgressCard } from './ui.js';
 import { clamp, closestElement, codeFenceText, cssAttr, escapeHtml, formatBytes, genId, plainExcerpt, safeFileName } from './utils.js';
 import { isFlowObject as isValidFlowShape, validateFlow } from '../shared/schemas.js';
 import type { ApiConfigResponse, FlowListResponse, LLMGenerateResponse, SaveFlowResponse } from '../shared/types.js';
@@ -55,7 +56,6 @@ const state: any = {
   selectedNodeIds: new Set(),
   pendingLLM: null,
   fullscreenNodeId: null,
-  progressIdCount: 0,
   flowName: '未命名流程图',
   appConfig: null,
   minimapBounds: null,
@@ -2224,54 +2224,12 @@ function updateFlowName() {
   DOM.flowName.textContent = state.flowName || '未命名流程图';
 }
 
-function createProgressCard({ title, sourceLabel = '批注', sourceText = '', prompt = '', stage = '准备中', summary = '' }: any = {}) {
-  const id = `progress-${state.progressIdCount++}`;
-  const card = document.createElement('article');
-  card.id = id;
-  card.className = 'progress-card';
-  card.innerHTML = `
-    <div class="progress-icon"><span class="material-symbols-outlined">progress_activity</span></div>
-    <div class="progress-body">
-      <div class="progress-title-row"><span class="progress-title"></span><span class="progress-stage"></span></div>
-      <div class="progress-line"><span class="progress-label source-label"></span><span class="progress-value source-value"></span></div>
-      <div class="progress-line"><span class="progress-label">提问</span><span class="progress-value prompt-value"></span></div>
-      <div class="progress-line"><span class="progress-label">摘要</span><span class="progress-value summary-value"></span></div>
-    </div>
-  `;
-  DOM.progressStack.appendChild(card);
-  updateProgressCard(id, { title, sourceLabel, sourceText, prompt, stage, summary });
-  return id;
+function createProgressCard(options = {}) {
+  return createProgressCardElement(DOM.progressStack, options);
 }
 
-function updateProgressCard(id, { title, sourceLabel, sourceText, prompt, stage, summary, done = false, error = false }: any = {}) {
-  if (!id) return;
-  const card = document.getElementById(id);
-  if (!card) return;
-  if (title !== undefined) card.querySelector('.progress-title').textContent = title || 'AI 生成';
-  if (stage !== undefined) card.querySelector('.progress-stage').textContent = stage || '';
-  if (sourceLabel !== undefined) card.querySelector('.source-label').textContent = sourceLabel || '上下文';
-  if (sourceText !== undefined) card.querySelector('.source-value').textContent = sourceText || '—';
-  if (prompt !== undefined) card.querySelector('.prompt-value').textContent = prompt || '默认扩展提示';
-  if (summary !== undefined) card.querySelector('.summary-value').textContent = summary || '—';
-  if (done || error) {
-    card.classList.toggle('done', done && !error);
-    card.classList.toggle('error', error);
-    const icon = card.querySelector('.progress-icon .material-symbols-outlined');
-    icon.textContent = error ? 'error' : 'check_circle';
-    setTimeout(() => {
-      card.style.opacity = '0';
-      card.style.transform = 'translateX(-16px)';
-      setTimeout(() => card.remove(), 260);
-    }, error ? 6200 : 3800);
-  }
-}
-
-let toastTimer = null;
 function showToast(message) {
-  DOM.toast.textContent = message;
-  DOM.toast.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => DOM.toast.classList.remove('show'), 2800);
+  showToastMessage(DOM.toast, message);
 }
 
 function demoDocument() {
