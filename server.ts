@@ -8,6 +8,7 @@ import { AuthStorage, getAgentDir, ModelRegistry, SettingsManager } from '@earen
 import { normalizeRhizoDocConfig } from './src/shared/config.js';
 import { normalizeGeneratedNode } from './src/shared/generated-node.js';
 import { normalizeFlowName as normalizeSafeFlowName, validateFlow, validateLLMPayload } from './src/shared/schemas.js';
+import { buildInstructions, buildLLMInput } from './src/server/llm-prompt.js';
 import { resolvePathInsideRoot } from './src/server/paths.js';
 import type { LLMGeneratePayload, RhizoDocConfig } from './src/shared/types.js';
 
@@ -189,38 +190,6 @@ function clientUnavailableMessage(): string {
 
 function normalizeLLMPayload(raw: unknown): LLMGeneratePayload {
   return validateLLMPayload(raw);
-}
-
-function buildInstructions() {
-  return [
-    '你是一个严谨的中文知识图谱/文档研究助手。',
-    '你的任务是为无限画布 DAG 生成一个新的节点（也可以是第一张根文档节点）。',
-    '输出格式必须是纯文本，不要输出 JSON、XML、YAML、代码围栏或额外说明。',
-    '第一行必须是节点纯文本短标题，尽量不超过 18 个汉字；不要加“标题：”前缀，也不要使用 Markdown 标题符号。',
-    '从第二行开始是节点 Markdown 正文；服务端会按第一个换行把第一行拆为 title，其余内容拆为 content。',
-    '正文必须是高质量 Markdown，可使用二级/三级标题、要点列表、引用、表格、代码块和 LaTeX 公式。'
-  ].join('\n');
-}
-
-function buildLLMInput(payload: LLMGeneratePayload) {
-  const modeText = {
-    selection: '基于用户选中的文本生成子节点。',
-    node: '基于右键节点的完整内容生成一个新的子节点。',
-    canvas: '在画布空白处生成一个独立新节点。',
-    initial: '根据用户 Prompt 生成一个全新的根文档节点。',
-    regenerate: '重新生成当前 AI 节点内容。',
-  }[payload.mode] || payload.mode;
-
-  return [
-    `生成模式：${modeText}`,
-    `用户指令：${payload.userPrompt}`,
-    payload.rootTitle ? `根文档标题：${payload.rootTitle}` : '',
-    payload.parentTitle ? `来源节点标题：${payload.parentTitle}` : '',
-    payload.selectedText ? `\n【选中文本】\n${payload.selectedText}` : '',
-    payload.parentContent ? `\n【来源节点 Markdown 内容】\n${payload.parentContent}` : '',
-    payload.graphSummary ? `\n【当前流程图摘要】\n${payload.graphSummary}` : '',
-    '\n请返回适合直接渲染为一个画布节点的纯文本：第一行是纯文本短标题，第二行起是中文 Markdown 正文。不要返回 JSON。',
-  ].filter(Boolean).join('\n');
 }
 
 async function requestLLMNode(payload: LLMGeneratePayload) {
