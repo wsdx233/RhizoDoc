@@ -22,7 +22,7 @@ RhizoDoc is a local-first AI document workspace that turns long documents, notes
 
 ## Tech Stack
 
-- Node.js 20+
+- Node.js 22.19+
 - TypeScript
 - Express 5
 - Vite 8

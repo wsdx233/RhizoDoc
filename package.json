@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "RhizoDoc：面向研究与长文档分析的 AI 文档图谱无限画布，使用 Pi 模型配置接入多模型供应商。",
   "type": "module",
+  "packageManager": "pnpm@11.3.0",
   "main": "server.ts",
   "scripts": {
     "start": "tsx server.ts",
@@ -43,6 +44,6 @@
     "vitest": "^4.1.8"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.19.0"
   }
 }
