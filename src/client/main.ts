@@ -57,6 +57,7 @@ const state: any = {
   currentSelection: { text: '', parentNodeId: null, start: 0, length: 0, source: 'node' },
   isNativeTextSelecting: false,
   deferredRenderNodeIds: new Set(),
+  deferredRenderPayloads: new Map(),
   keepTooltipAfterSelectionClear: false,
   contextNodeId: null,
   contextNodeIds: [],
@@ -675,8 +676,9 @@ function updateNodeElement(id, { contentHtml = null, preserveContent = false } =
 
 async function renderNodeStreamdownContent(id, markdown, options: any = {}) {
   const streaming = options.streaming !== false;
-  if (shouldPreserveNodeContentForSelection(id)) {
+  if (!options.force && shouldPreserveNodeContentForSelection(id)) {
     state.deferredRenderNodeIds.add(id);
+    state.deferredRenderPayloads.set(id, { renderer: 'streamdown', markdown: markdown || '', streaming });
     updateNodeElement(id, { preserveContent: true });
     return false;
   }
@@ -686,6 +688,7 @@ async function renderNodeStreamdownContent(id, markdown, options: any = {}) {
   if (!contentEl) return false;
 
   state.deferredRenderNodeIds.delete(id);
+  state.deferredRenderPayloads.delete(id);
   await renderStreamdownMarkdown(contentEl, markdown || '', { streaming });
   if (state.fullscreenNodeId === id) await renderStreamdownMarkdown(DOM.fsContent, markdown || '', { streaming });
   await tiledWorkspace.renderStreamdownContent(id, markdown || '', { streaming });
@@ -696,10 +699,12 @@ async function renderNodeStreamdownContent(id, markdown, options: any = {}) {
 function updateNodeElementPreservingActiveSelection(id, options = {}) {
   if (shouldPreserveNodeContentForSelection(id)) {
     state.deferredRenderNodeIds.add(id);
+    state.deferredRenderPayloads.set(id, { renderer: 'static', options });
     updateNodeElement(id, { ...options, preserveContent: true });
     return true;
   }
   state.deferredRenderNodeIds.delete(id);
+  state.deferredRenderPayloads.delete(id);
   updateNodeElement(id, options);
   return false;
 }
@@ -722,12 +727,20 @@ function shouldPreserveNodeContentForSelection(nodeId) {
 
 function flushDeferredNodeRender(nodeId = null, { force = false } = {}) {
   const ids = nodeId ? [nodeId] : Array.from(state.deferredRenderNodeIds);
+  const pending = [];
   for (const id of ids) {
     if (!id || !state.deferredRenderNodeIds.has(id)) continue;
     if (!force && shouldPreserveNodeContentForSelection(id)) continue;
+    const payload = state.deferredRenderPayloads.get(id);
     state.deferredRenderNodeIds.delete(id);
-    updateNodeElement(id);
+    state.deferredRenderPayloads.delete(id);
+    if (payload?.renderer === 'streamdown') {
+      pending.push(renderNodeStreamdownContent(id, payload.markdown || '', { streaming: payload.streaming, force: true }));
+    } else {
+      updateNodeElement(id, payload?.options || {});
+    }
   }
+  return Promise.all(pending);
 }
 
 function updateNodeCollapseState(id) {
@@ -1357,7 +1370,7 @@ function hideTooltip({ preserveNativeSelection = false } = {}) {
   DOM.tooltip.classList.remove('focus');
   if (!preserveNativeSelection) window.getSelection()?.removeAllRanges();
   state.currentSelection = { text: '', parentNodeId: null, start: 0, length: 0, source: 'node' };
-  flushDeferredNodeRender(deferredNodeId, { force: true });
+  void flushDeferredNodeRender(deferredNodeId, { force: true });
 }
 
 function hideMenus() {
@@ -1389,6 +1402,7 @@ function syncFullscreenContent(id, { contentHtml = null } = {}) {
   if (!node || state.fullscreenNodeId !== id) return;
   if (shouldPreserveNodeContentForSelection(id)) {
     state.deferredRenderNodeIds.add(id);
+    state.deferredRenderPayloads.set(id, { renderer: 'static', options: { contentHtml } });
     return;
   }
   unmountStreamdownMarkdown(DOM.fsContent);
