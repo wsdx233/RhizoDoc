@@ -618,18 +618,58 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
 
   function getSectionAnchor(nodeId, targetId = '') {
     const section = root.querySelector(`[data-node-id="${cssAttr(nodeId)}"]`) as HTMLElement | null;
-    if (!section) return null;
+    if (!section || !isSectionVisibleInWorkspace(section)) return null;
     const field = section.closest('.tiled-field') as HTMLElement | null;
     const fieldRect = (field || root).getBoundingClientRect();
     const anchorElement = targetId
       ? section.querySelector(`[data-ref-id="${cssAttr(targetId)}"]`) as HTMLElement | null
       : null;
-    const rect = (anchorElement || section).getBoundingClientRect();
+    const rect = getRelationAnchorRect(section, anchorElement);
     return {
       x: rect.left - fieldRect.left + (field?.scrollLeft || 0) + rect.width / 2,
       y: rect.top - fieldRect.top + (field?.scrollTop || 0) + rect.height / 2,
       section,
     };
+  }
+
+  function isSectionVisibleInWorkspace(section: HTMLElement) {
+    const rect = section.getBoundingClientRect();
+    const rootRect = root.getBoundingClientRect();
+    return rect.right > rootRect.left
+      && rect.left < rootRect.right
+      && rect.bottom > rootRect.top
+      && rect.top < rootRect.bottom;
+  }
+
+  function getRelationAnchorRect(section: HTMLElement, anchorElement: HTMLElement | null) {
+    const sectionRect = section.getBoundingClientRect();
+    if (!anchorElement) return sectionRect;
+
+    const anchorRect = anchorElement.getBoundingClientRect();
+    const content = anchorElement.closest('.tiled-content') as HTMLElement | null;
+    const contentRect = content?.getBoundingClientRect();
+    if (!contentRect) return anchorRect;
+
+    const visibleLeft = Math.max(anchorRect.left, contentRect.left, sectionRect.left);
+    const visibleRight = Math.min(anchorRect.right, contentRect.right, sectionRect.right);
+    const visibleTop = Math.max(anchorRect.top, contentRect.top, sectionRect.top);
+    const visibleBottom = Math.min(anchorRect.bottom, contentRect.bottom, sectionRect.bottom);
+    if (visibleRight > visibleLeft + 1 && visibleBottom > visibleTop + 1) {
+      return rectLike(visibleLeft, visibleTop, visibleRight - visibleLeft, visibleBottom - visibleTop);
+    }
+
+    const anchorCenterX = anchorRect.left + anchorRect.width / 2;
+    const clampedX = clamp(anchorCenterX, contentRect.left, contentRect.right);
+    const clampedY = anchorRect.bottom < contentRect.top
+      ? contentRect.top
+      : anchorRect.top > contentRect.bottom
+        ? contentRect.bottom
+        : clamp(anchorRect.top + anchorRect.height / 2, contentRect.top, contentRect.bottom);
+    return rectLike(clampedX, clampedY, 0, 0);
+  }
+
+  function rectLike(left: number, top: number, width: number, height: number) {
+    return { left, top, width, height };
   }
 
   function appendRelationPath(layer, source, target, type, color, active) {
