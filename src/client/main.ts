@@ -1,7 +1,9 @@
 import './styles.css';
+import { applyAnnotationToContainer, unwrapMarksForTarget } from './annotations.js';
 import { fetchJson, postEventStream, postJson } from './api.js';
 import { demoDocument } from './demo.js';
 import { byId, collectDomRefs } from './dom.js';
+import { forEachLogicalTextSegment, getLogicalRangeSelection } from './logical-text.js';
 import { postProcessNodeContent, renderMarkdown } from './markdown.js';
 import { clearStreamingPreview, renderStreamingMarkdownPreview } from './streaming-preview.js';
 import { createProgressCard as createProgressCardElement, showToast as showToastMessage, updateProgressCard } from './ui.js';
@@ -1262,135 +1264,6 @@ function clearTemporarySelection() {
   });
 }
 
-function normalizeSelectionText(rawText) {
-  const text = String(rawText || '');
-  const leading = text.match(/^\s*/)?.[0]?.length || 0;
-  const trailing = text.match(/\s*$/)?.[0]?.length || 0;
-  const trimmed = text.slice(leading, text.length - trailing);
-  return { text: trimmed, leading, trailing };
-}
-
-function getLogicalRangeSelection(container, range, rawText = '') {
-  const units = getLogicalTextUnits(container);
-  let selectionStart = null;
-  let logicalText = '';
-
-  for (const unit of units) {
-    const segment = getSelectedUnitSegment(unit, range);
-    if (!segment || segment.to <= segment.from) continue;
-    const segmentText = unit.text.slice(segment.from, segment.to);
-    if (!segmentText) continue;
-    if (selectionStart === null) selectionStart = unit.start + segment.from;
-    logicalText += segmentText;
-  }
-
-  if (selectionStart !== null && logicalText.trim()) {
-    const normalized = normalizeSelectionText(logicalText);
-    if (normalized.text) {
-      return {
-        text: normalized.text,
-        start: selectionStart + normalized.leading,
-        length: normalized.text.length,
-      };
-    }
-  }
-
-  const offsets = getDomRangeOffsets(container, range);
-  if (!offsets || offsets.length <= 0) return null;
-  const normalized = normalizeSelectionText(rawText);
-  if (!normalized.text) return null;
-  return {
-    text: normalized.text,
-    start: offsets.start + normalized.leading,
-    length: normalized.text.length,
-  };
-}
-
-function getSelectedUnitSegment(unit, range) {
-  const target = unit.type === 'math' ? unit.element : unit.node;
-  if (!rangeIntersectsNode(range, target)) return null;
-
-  if (unit.type === 'math') {
-    return { from: 0, to: unit.text.length };
-  }
-
-  const value = unit.text || '';
-  let from = 0;
-  let to = value.length;
-  if (range.startContainer === unit.node) from = clamp(range.startOffset, 0, value.length);
-  if (range.endContainer === unit.node) to = clamp(range.endOffset, 0, value.length);
-  return from < to ? { from, to } : null;
-}
-
-function getDomRangeOffsets(container, range) {
-  try {
-    const before = document.createRange();
-    before.selectNodeContents(container);
-    before.setEnd(range.startContainer, range.startOffset);
-    const start = before.toString().length;
-    return { start, length: range.toString().length };
-  } catch {
-    return null;
-  }
-}
-
-function getLogicalText(container) {
-  return getLogicalTextUnits(container).map((unit) => unit.text).join('');
-}
-
-function getLogicalTextUnits(container) {
-  const units = [];
-  let cursor = 0;
-
-  const addUnit = (unit) => {
-    const text = String(unit.text || '');
-    units.push({ ...unit, text, start: cursor, end: cursor + text.length });
-    cursor += text.length;
-  };
-
-  const visit = (node) => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      addUnit({ type: 'text', node, text: node.nodeValue || '' });
-      return;
-    }
-    if (node.nodeType !== Node.ELEMENT_NODE) return;
-
-    const element = node;
-    if (element.classList?.contains('math-node')) {
-      addUnit({ type: 'math', element, text: getMathLogicalText(element) });
-      return;
-    }
-
-    Array.from(element.childNodes).forEach(visit);
-  };
-
-  visit(container);
-  return units;
-}
-
-function getMathLogicalText(element) {
-  return element.dataset.mathSource || element.getAttribute('data-math-source') || element.textContent || '';
-}
-
-function forEachLogicalTextSegment(container, start, length, callback) {
-  if (!Number.isFinite(start) || !Number.isFinite(length) || length <= 0) return;
-  const end = start + length;
-  for (const unit of getLogicalTextUnits(container)) {
-    if (unit.end <= start || unit.start >= end) continue;
-    const from = Math.max(0, start - unit.start);
-    const to = Math.min(unit.text.length, end - unit.start);
-    if (from < to) callback(unit, from, to);
-  }
-}
-
-function rangeIntersectsNode(range, node) {
-  try {
-    return range.intersectsNode(node);
-  } catch {
-    return false;
-  }
-}
-
 function hideTooltip({ preserveNativeSelection = false } = {}) {
   const deferredNodeId = state.currentSelection?.parentNodeId || null;
   if (!preserveNativeSelection) state.isNativeTextSelecting = false;
@@ -1944,11 +1817,6 @@ function updateNodeDirection(id) {
   document.getElementById(node.id)?.setAttribute('data-dir', node.dir);
 }
 
-function highlightColors(colorIndex) {
-  const index = ((Number(colorIndex) || 0) % 5 + 5) % 5;
-  return { bg: `var(--hl-${index}-bg)`, fg: `var(--hl-${index}-fg)` };
-}
-
 function applyAnnotationsForSourceNode(sourceNodeId) {
   state.annotations
     .filter((annotation) => annotation.sourceNodeId === sourceNodeId)
@@ -1959,86 +1827,6 @@ function applyAnnotation(annotation) {
   const sourceEl = document.getElementById(annotation.sourceNodeId);
   const container = sourceEl?.querySelector('.node-content');
   applyAnnotationToContainer(container, annotation);
-}
-
-function applyAnnotationToContainer(container, annotation) {
-  if (!container) return;
-  if (container.querySelector(`[data-annotation-id="${cssAttr(annotation.id)}"]`)) return;
-
-  const totalText = getLogicalText(container);
-  let start = Number(annotation.start);
-  let length = Number(annotation.length);
-  const storedText = annotation.text || '';
-
-  if (!Number.isFinite(start) || !Number.isFinite(length) || length <= 0 || totalText.slice(start, start + length) !== storedText) {
-    const index = storedText ? totalText.indexOf(storedText) : -1;
-    if (index < 0) return;
-    start = index;
-    length = storedText.length;
-  }
-
-  wrapTextByOffset(container, start, length, annotation);
-}
-
-function wrapTextByOffset(container, start, length, annotation) {
-  forEachLogicalTextSegment(container, start, length, (unit, from, to) => {
-    if (unit.type === 'math') {
-      annotateMathElement(unit.element, annotation);
-      return;
-    }
-    if (from < to) wrapTextNodeSegment(unit.node, from, to, annotation);
-  });
-}
-
-function wrapTextNodeSegment(textNode, from, to, annotation) {
-  const value = textNode.nodeValue || '';
-  const fragment = document.createDocumentFragment();
-  if (from > 0) fragment.appendChild(document.createTextNode(value.slice(0, from)));
-
-  const mark = document.createElement('mark');
-  const colors = highlightColors(annotation.colorIndex);
-  mark.className = 'annotated';
-  mark.dataset.refId = annotation.targetNodeId;
-  mark.dataset.annotationId = annotation.id;
-  mark.style.backgroundColor = colors.bg;
-  mark.style.color = colors.fg;
-  mark.title = '点击定位到生成节点';
-  mark.textContent = value.slice(from, to);
-  fragment.appendChild(mark);
-
-  if (to < value.length) fragment.appendChild(document.createTextNode(value.slice(to)));
-  textNode.parentNode?.replaceChild(fragment, textNode);
-}
-
-function annotateMathElement(element, annotation) {
-  if (!element) return;
-  const colors = highlightColors(annotation.colorIndex);
-  element.classList.add('annotated-math');
-  element.dataset.refId = annotation.targetNodeId;
-  element.dataset.annotationId = annotation.id;
-  element.style.backgroundColor = colors.bg;
-  element.style.color = colors.fg;
-  element.title = '点击定位到生成节点';
-}
-
-function unwrapMarksForTarget(targetId) {
-  document.querySelectorAll<HTMLElement>('mark.annotated').forEach((mark) => {
-    if (mark.dataset.refId !== targetId) return;
-    const parent = mark.parentNode;
-    if (!parent) return;
-    while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
-    parent.removeChild(mark);
-    parent.normalize();
-  });
-  document.querySelectorAll<HTMLElement>('.math-node.annotated-math').forEach((mathEl) => {
-    if (mathEl.dataset.refId !== targetId) return;
-    mathEl.classList.remove('annotated-math');
-    delete mathEl.dataset.refId;
-    delete mathEl.dataset.annotationId;
-    mathEl.style.backgroundColor = '';
-    mathEl.style.color = '';
-    mathEl.title = '';
-  });
 }
 
 function updateCanvasTransform() {
