@@ -61,6 +61,7 @@ const state: any = {
   keepTooltipAfterSelectionClear: false,
   contextNodeId: null,
   contextNodeIds: [],
+  contextMenuSource: 'canvas',
   contextCanvasPoint: { x: 0, y: 0 },
   selectedNodeIds: new Set(),
   pendingLLM: null,
@@ -139,6 +140,7 @@ function bindEvents() {
   DOM.nodesLayer.addEventListener('mousedown', onNodesLayerMouseDown);
   DOM.nodesLayer.addEventListener('click', onNodesLayerClick);
   DOM.tiledWorkspace.addEventListener('click', tiledWorkspace.handleClick);
+  DOM.tiledWorkspace.addEventListener('contextmenu', onTiledContextMenu);
   DOM.tiledWorkspace.addEventListener('scroll', tiledWorkspace.handleScroll, true);
   DOM.tiledWorkspace.addEventListener('pointerdown', tiledWorkspace.handlePointerDown);
   DOM.tiledWorkspace.addEventListener('pointermove', tiledWorkspace.handlePointerMove);
@@ -201,8 +203,10 @@ function bindEvents() {
   });
   byId('menu-toggle-collapse').addEventListener('click', () => {
     const ids = getContextNodeIds();
+    const source = state.contextMenuSource;
     hideMenus();
-    toggleNodesCollapse(ids);
+    if (source === 'tiled') tiledWorkspace.toggleTitleOnly(ids);
+    else toggleNodesCollapse(ids);
   });
   byId('menu-ai-child').addEventListener('click', () => {
     hideMenus();
@@ -569,6 +573,7 @@ function resetGraph() {
   state.currentSelection = { text: '', parentNodeId: null, start: 0, length: 0, source: 'node' };
   state.contextNodeId = null;
   state.contextNodeIds = [];
+  state.contextMenuSource = 'canvas';
   clearNodeSelection();
   state.fullscreenNodeId = null;
   state.workspaces = [];
@@ -1457,28 +1462,71 @@ function onContextMenu(event) {
 
   if (nodeEl) {
     if (!isNodeSelected(nodeEl.id)) selectOnlyNode(nodeEl.id);
-    const contextIds = getActionNodeIds(nodeEl.id);
-    state.contextNodeId = nodeEl.id;
-    state.contextNodeIds = contextIds;
-    const selectedNodes = contextIds.map((id) => getNode(id)).filter(Boolean);
-    const toggleMenu = byId('menu-toggle-collapse');
-    const toggleIcon = toggleMenu.querySelector('.material-symbols-outlined');
-    const collapsibleIds = contextIds.filter((id) => document.getElementById(id)?.classList.contains('collapsible'));
-    const shouldCollapse = collapsibleIds.some((id) => !getNode(id)?.collapsed);
-    toggleIcon.textContent = shouldCollapse ? 'unfold_less' : 'unfold_more';
-    toggleMenu.lastChild.textContent = shouldCollapse ? ' 收起内容' : ' 展开内容';
-    toggleMenu.classList.toggle('disabled', collapsibleIds.length === 0);
-    byId('menu-regen').classList.toggle('disabled', !selectedNodes.some((node) => node.id !== 'node-root' && node.llm));
-    byId('menu-delete').classList.toggle('disabled', !selectedNodes.some((node) => node.id !== 'node-root'));
+    configureCanvasNodeContextMenu(nodeEl.id, getActionNodeIds(nodeEl.id));
     DOM.canvasMenu.style.display = 'none';
     showMenu(DOM.nodeMenu, event.clientX, event.clientY);
   } else {
     state.contextNodeId = null;
     state.contextNodeIds = [];
+    state.contextMenuSource = 'canvas';
     state.contextCanvasPoint = screenToCanvas(event.clientX, event.clientY);
     DOM.nodeMenu.style.display = 'none';
     showMenu(DOM.canvasMenu, event.clientX, event.clientY);
   }
+}
+
+function onTiledContextMenu(event) {
+  event.preventDefault();
+  hideTooltip();
+  const section = (event.target as Element).closest('.tiled-section') as HTMLElement | null;
+  const nodeId = section?.dataset.nodeId;
+  if (!nodeId || !getNode(nodeId)) {
+    state.contextNodeId = null;
+    state.contextNodeIds = [];
+    state.contextMenuSource = 'tiled';
+    hideMenus();
+    return;
+  }
+
+  tiledWorkspace.focusNode(nodeId, { scroll: false });
+  configureTiledNodeContextMenu(nodeId);
+  DOM.canvasMenu.style.display = 'none';
+  showMenu(DOM.nodeMenu, event.clientX, event.clientY);
+}
+
+function configureCanvasNodeContextMenu(nodeId, contextIds) {
+  state.contextNodeId = nodeId;
+  state.contextNodeIds = contextIds;
+  state.contextMenuSource = 'canvas';
+  const selectedNodes = contextIds.map((id) => getNode(id)).filter(Boolean);
+  const toggleMenu = byId('menu-toggle-collapse');
+  const collapsibleIds = contextIds.filter((id) => document.getElementById(id)?.classList.contains('collapsible'));
+  const shouldCollapse = collapsibleIds.some((id) => !getNode(id)?.collapsed);
+  setMenuItemLabel(toggleMenu, shouldCollapse ? 'unfold_less' : 'unfold_more', shouldCollapse ? '收起内容' : '展开内容');
+  toggleMenu.classList.toggle('disabled', collapsibleIds.length === 0);
+  byId('menu-regen').classList.toggle('disabled', !selectedNodes.some((node) => node.id !== 'node-root' && node.llm));
+  byId('menu-delete').classList.toggle('disabled', !selectedNodes.some((node) => node.id !== 'node-root'));
+}
+
+function configureTiledNodeContextMenu(nodeId) {
+  state.contextNodeId = nodeId;
+  state.contextNodeIds = [nodeId];
+  state.contextMenuSource = 'tiled';
+  const node = getNode(nodeId);
+  const toggleMenu = byId('menu-toggle-collapse');
+  const isTitleOnly = tiledWorkspace.isTitleOnly(nodeId);
+  setMenuItemLabel(toggleMenu, isTitleOnly ? 'unfold_more' : 'notes', isTitleOnly ? '展开面板' : '仅显示标题');
+  toggleMenu.classList.remove('disabled');
+  byId('menu-regen').classList.toggle('disabled', !(node && node.id !== 'node-root' && node.llm));
+  byId('menu-delete').classList.toggle('disabled', !(node && node.id !== 'node-root'));
+}
+
+function setMenuItemLabel(menuItem, iconName, label) {
+  const icon = menuItem.querySelector('.material-symbols-outlined');
+  if (icon) icon.textContent = iconName;
+  const textNode = Array.from(menuItem.childNodes as NodeListOf<ChildNode>).find((node) => node.nodeType === Node.TEXT_NODE);
+  if (textNode) textNode.textContent = ` ${label}`;
+  else menuItem.append(` ${label}`);
 }
 
 function showMenu(menu, clientX, clientY) {
@@ -1874,8 +1922,10 @@ function deleteNodes(ids) {
   setNodeSelection(getSelectedNodeIds().filter((id) => !targetSet.has(id)));
   state.contextNodeId = null;
   state.contextNodeIds = [];
+  state.contextMenuSource = 'canvas';
   drawEdges();
   updateMinimap();
+  if (state.activeView === 'tiled') tiledWorkspace.render();
   showToast(targets.length > 1 ? `已删除 ${targets.length} 个节点` : '节点已删除');
 }
 

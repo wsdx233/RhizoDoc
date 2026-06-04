@@ -881,6 +881,22 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     else refreshLayoutPositions();
   }
 
+  function isTitleOnly(nodeId) {
+    return ensureWorkspace().pages?.[nodeId]?.display === 'title';
+  }
+
+  function toggleTitleOnly(nodeIds) {
+    const ids = Array.from(new Set(nodeIds || [])).filter((id: any) => getNode(String(id)));
+    if (ids.length === 0) return;
+    const workspace = ensureWorkspace();
+    const shouldShowTitleOnly = ids.some((id) => ensurePageState(String(id)).display !== 'title');
+    for (const id of ids) {
+      ensurePageState(String(id)).display = shouldShowTitleOnly ? 'title' : 'normal';
+    }
+    workspace.updatedAt = new Date().toISOString();
+    render();
+  }
+
   function ensurePageState(nodeId) {
     const workspace = ensureWorkspace();
     const existing = workspace.pages[nodeId];
@@ -906,5 +922,8 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     handlePointerCancel: finishPointerGesture,
     renderStreamdownContent,
     updateNodeShell,
+    focusNode: focusWorkspaceNode,
+    isTitleOnly,
+    toggleTitleOnly,
   };
 }
