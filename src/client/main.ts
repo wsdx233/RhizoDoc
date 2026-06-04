@@ -78,8 +78,6 @@ const tiledWorkspace = createTiledWorkspaceController({
   root: DOM.tiledWorkspace,
   state,
   getNode,
-  setActiveView,
-  focusCanvasNode: focusNode,
   openFullscreen,
   isEditableTarget,
 });
@@ -142,6 +140,10 @@ function bindEvents() {
   DOM.nodesLayer.addEventListener('click', onNodesLayerClick);
   DOM.tiledWorkspace.addEventListener('click', tiledWorkspace.handleClick);
   DOM.tiledWorkspace.addEventListener('scroll', tiledWorkspace.handleScroll, true);
+  DOM.tiledWorkspace.addEventListener('pointerdown', tiledWorkspace.handlePointerDown);
+  DOM.tiledWorkspace.addEventListener('pointermove', tiledWorkspace.handlePointerMove);
+  DOM.tiledWorkspace.addEventListener('pointerup', tiledWorkspace.handlePointerUp);
+  DOM.tiledWorkspace.addEventListener('pointercancel', tiledWorkspace.handlePointerCancel);
   window.addEventListener('mousemove', onWindowMouseMove);
   window.addEventListener('mouseup', onWindowMouseUp);
   document.addEventListener('mouseup', (event) => {

@@ -3,6 +3,7 @@ import { postProcessNodeContent, renderMarkdown } from './markdown.js';
 import { renderStreamdownMarkdown, unmountStreamdownMarkdown } from './streamdown-renderer.js';
 import { clamp, cssAttr } from './utils.js';
 import {
+  DEFAULT_TILED_COLUMN_WIDTH,
   DEFAULT_TILED_LANE_GAP,
   DEFAULT_TILED_SECTION_HEIGHT,
   MAX_TILED_COLUMN_WIDTH,
@@ -20,18 +21,18 @@ type TiledWorkspaceControllerOptions = {
   root: HTMLElement;
   state: any;
   getNode: (id: string) => any;
-  setActiveView: (view: 'canvas' | 'tiled') => void;
-  focusCanvasNode: (id: string) => void;
   openFullscreen: (id: string) => void;
   isEditableTarget: (target: EventTarget | null) => boolean;
 };
 
 export function createTiledWorkspaceController(options: TiledWorkspaceControllerOptions) {
-  const { root, state, getNode, setActiveView, focusCanvasNode, openFullscreen, isEditableTarget } = options;
+  const { root, state, getNode, openFullscreen, isEditableTarget } = options;
   const tailStateByNodeId = new Map();
   let pendingLayoutRefresh = 0;
   let isAdjustingRootScroll = false;
   let relationAnimationFrame = 0;
+  let resizeGesture: any = null;
+  let suppressNextClick = false;
 
   function ensureWorkspace() {
     let workspace = state.workspaces.find((item) => item.id === state.activeWorkspaceId) || state.workspaces[0];
@@ -465,7 +466,69 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     contentEl.scrollTop = Math.max(0, contentEl.scrollHeight - contentEl.clientHeight);
   }
 
+  function handlePointerDown(event) {
+    if (!event.shiftKey || event.button !== 0 || isEditableTarget(event.target)) return false;
+    const section = (event.target as Element).closest('.tiled-section') as HTMLElement | null;
+    if (!section) return false;
+    const nodeId = section.dataset.nodeId;
+    if (!nodeId) return false;
+    const workspace = ensureWorkspace();
+    const column = workspace.columns.find((item) => item.pageIds.includes(nodeId));
+    const pageState = ensurePageState(nodeId);
+    if (!column) return false;
+
+    resizeGesture = {
+      pointerId: event.pointerId,
+      nodeId,
+      columnId: column.id,
+      startX: event.clientX,
+      startY: event.clientY,
+      startColumnWidth: Number(column.width) || DEFAULT_TILED_COLUMN_WIDTH,
+      startPanelHeight: Number(pageState.height) || DEFAULT_TILED_SECTION_HEIGHT,
+      moved: false,
+    };
+    root.classList.add('tiled-resizing');
+    section.classList.add('resizing');
+    focusSection(section);
+    root.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+    return true;
+  }
+
+  function handlePointerMove(event) {
+    if (!resizeGesture || event.pointerId !== resizeGesture.pointerId) return false;
+    const dx = event.clientX - resizeGesture.startX;
+    const dy = event.clientY - resizeGesture.startY;
+    if (Math.abs(dx) + Math.abs(dy) > 3) resizeGesture.moved = true;
+    const workspace = ensureWorkspace();
+    const column = workspace.columns.find((item) => item.id === resizeGesture.columnId);
+    const pageState = ensurePageState(resizeGesture.nodeId);
+    if (!column) return true;
+    column.width = clamp(resizeGesture.startColumnWidth + dx, MIN_TILED_COLUMN_WIDTH, MAX_TILED_COLUMN_WIDTH);
+    pageState.height = clamp(resizeGesture.startPanelHeight + dy, MIN_TILED_SECTION_HEIGHT, MAX_TILED_SECTION_HEIGHT);
+    workspace.updatedAt = new Date().toISOString();
+    refreshLayoutPositions();
+    event.preventDefault();
+    return true;
+  }
+
+  function finishPointerGesture(event) {
+    if (!resizeGesture || event.pointerId !== resizeGesture.pointerId) return false;
+    suppressNextClick = Boolean(resizeGesture.moved);
+    root.releasePointerCapture?.(event.pointerId);
+    root.classList.remove('tiled-resizing');
+    root.querySelector(`[data-node-id="${cssAttr(resizeGesture.nodeId)}"]`)?.classList.remove('resizing');
+    resizeGesture = null;
+    event.preventDefault();
+    return true;
+  }
+
   function handleClick(event) {
+    if (suppressNextClick) {
+      suppressNextClick = false;
+      event.preventDefault();
+      return;
+    }
     const actionButton = (event.target as Element).closest('[data-tiled-action]') as HTMLElement | null;
     if (actionButton) {
       event.preventDefault();
@@ -479,8 +542,8 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     const annotated = (event.target as Element).closest('mark.annotated, .math-node.annotated-math') as HTMLElement | null;
     const targetId = annotated?.dataset.refId;
     if (targetId) {
-      setActiveView('canvas');
-      focusCanvasNode(targetId);
+      event.preventDefault();
+      focusWorkspaceNode(targetId, { scroll: true });
       return;
     }
 
@@ -734,18 +797,34 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
   function focusSection(section) {
     const nodeId = section?.dataset.nodeId;
     if (!nodeId) return;
-    const workspace = ensureWorkspace();
-    const column = workspace.columns.find((item) => item.pageIds.includes(nodeId));
-    const changed = workspace.focus?.nodeId !== nodeId;
-    workspace.focus = { workspaceId: workspace.id, region: 'columns', columnId: column?.id, nodeId };
-    workspace.updatedAt = new Date().toISOString();
-    if (changed) {
-      refreshLayoutPositions();
-    } else {
+    const changed = ensureWorkspace().focus?.nodeId !== nodeId;
+    focusWorkspaceNode(nodeId, { scroll: false, forceRefresh: changed });
+    if (!changed) {
       root.querySelectorAll('.tiled-section.focused').forEach((item) => item.classList.remove('focused'));
       section.classList.add('focused');
       requestAnimationFrame(drawRelations);
     }
+  }
+
+  function focusWorkspaceNode(nodeId, { scroll = false, forceRefresh = true } = {}) {
+    if (!getNode(nodeId)) return false;
+    const workspace = ensureWorkspace();
+    const projection = projectTiledColumns(state.nodes, state.edges, workspace);
+    workspace.columns = projection.columns;
+    const column = projection.columns.find((item) => item.pageIds.includes(nodeId));
+    workspace.focus = { workspaceId: workspace.id, region: 'columns', columnId: column?.id, nodeId };
+    workspace.updatedAt = new Date().toISOString();
+
+    const existingSection = root.querySelector(`[data-node-id="${cssAttr(nodeId)}"]`);
+    if (existingSection && forceRefresh) refreshLayoutPositions();
+    else if (!existingSection) render();
+
+    if (scroll) {
+      requestAnimationFrame(() => {
+        root.querySelector(`[data-node-id="${cssAttr(nodeId)}"]`)?.scrollIntoView({ block: 'center', inline: 'nearest' });
+      });
+    }
+    return true;
   }
 
   function scheduleLayoutRefresh() {
@@ -821,6 +900,10 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     handleClick,
     handleKeydown,
     handleScroll,
+    handlePointerDown,
+    handlePointerMove,
+    handlePointerUp: finishPointerGesture,
+    handlePointerCancel: finishPointerGesture,
     renderStreamdownContent,
     updateNodeShell,
   };

@@ -187,6 +187,7 @@ Tiling layout operations:
 
 - `Shift+ArrowUp`: swap focused panel with previous panel in the same depth stack.
 - `Shift+ArrowDown`: swap focused panel with next panel in the same depth stack.
+- `Shift + primary-button drag` on a panel: resize the panel and its depth column together; horizontal drag changes column width, vertical drag changes panel height.
 - `[` / `]`: shorten/tallify focused panel.
 - `Space`: title-only toggle.
 
@@ -201,6 +202,8 @@ Graph/content operations remain explicit command-palette actions:
 
 The current DOM implementation can remain for MVP:
 
+- keep input handling inside the tiled workspace controller as event delegation plus small gesture state machines;
+- treat pointer gestures, keyboard commands, scroll intent, and text selection as separate input channels;
 - render depth columns as absolute stack lanes;
 - render each panel at its computed stack y plus contextual column offset;
 - add viewport-sized vertical slack above and below the field, so over-scroll can move every panel out of view;
