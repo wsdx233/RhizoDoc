@@ -1,314 +1,419 @@
-# Tiled Workspace Design
+# Bottomless Tiled Workspace Design
 
 ## Purpose
 
-RhizoDoc currently has an infinite canvas view that is good for spatial exploration, edge inspection, and free-form annotation work. The tiled workspace is a second frontend view over the same flow data: a keyboard-friendly, column-oriented reading and synthesis surface inspired by tiling window managers, Miller columns, and sliding panes.
+The second RhizoDoc frontend is not a conventional tiled window manager. It is a **bottomless relation field** over the same document graph.
 
-The tiled workspace should not replace the canvas. It should let users create a different viewpoint over the same document graph: structured, dense, persistent, and easy to navigate without a mouse.
+The infinite canvas remains the free spatial map. The bottomless tiled workspace is a dense reading/synthesis field: pages are constrained into depth/lane columns, but the vertical dimension has no bottom. Parent-child edges and annotation links create visible and interactive tension between panels.
 
-## Design Principles
+This replaces the earlier assumption that the view should simply fill the screen with a finite set of columns. Columns are still useful, but they are not the core idea. The core idea is:
 
-1. **Content and viewpoint stay separate**: nodes, edges, annotations, and LLM metadata remain content; tiled columns, section heights, ordering, scroll positions, floating pages, and focus are workspace state.
-2. **Default layout is derived, user layout is persisted**: when no workspace overrides exist, derive columns from graph depth; persist only user choices and workspace-specific view state.
-3. **Tree-first, DAG-tolerant**: most flows are expected to be trees, but the projection must tolerate DAG edges, orphan nodes, and independent canvas nodes.
-4. **One page, many presentations**: a node/page can appear on the canvas, in a tiled section, in a floating scratchpad, and in a search result without duplicating content.
-5. **Keyboard model is first-class**: focus, commands, and search should be designed as state/actions, not ad-hoc event listeners.
-6. **Rendering remains incremental**: keep the current static Markdown renderer and Streamdown island; do not force a full app rewrite.
+> A graph-projected, bottomless, keyboardable document field whose panels are shaped by relationship tension.
+
+## Revised Core Principles
+
+1. **Bottomless, not screen-fitted**
+   - The workspace is allowed to grow downward indefinitely.
+   - A viewport reveals a moving window over this field.
+   - The goal is not to pack everything into the current screen height.
+   - The current screen is only a lens over a larger relation surface.
+
+2. **Columns are lanes, not containers with bottoms**
+   - Depth columns still provide left-to-right structure.
+   - Each column is a vertical lane with unbounded length.
+   - A panel has a lane/depth, y position, height, display mode, and scroll position.
+   - Page order can be derived from y positions, but order is not the whole layout.
+
+3. **Relationships create tension**
+   - Parent-child edges, annotation links, and future semantic links should pull related panels toward meaningful vertical alignment.
+   - The field should show these pulls visually: spring curves, glow, focus halos, offscreen indicators.
+   - The layout can offer automatic/soft relaxation, but user positioning remains authoritative.
+
+4. **Left/right navigation follows graph structure**
+   - Left/right should not mean “adjacent column item.”
+   - Left means parent / strongest incoming structural relation.
+   - Right means child / strongest outgoing structural relation.
+   - Up/down navigate local vertical neighborhood within the current lane.
+   - Explicit reparenting or cross-lane layout movement should be separate commands, not basic navigation.
+
+5. **Annotations are first-class spatial relations**
+   - An annotation is not just highlighted text plus a child node.
+   - It is a relation with a source anchor inside one page and a target panel elsewhere.
+   - In the tiled workspace, annotation links should create stronger visual tension than ordinary structural edges because they point to exact text spans.
+
+6. **Content and viewpoint remain separate**
+   - Nodes, edges, annotations, and LLM metadata remain content.
+   - Lane choice, y position, height, title-only state, scroll position, floating state, and focus are viewpoint state.
+   - Workspaces are saved viewpoints over the same graph.
+
+7. **Manual layout beats automatic layout**
+   - Automatic projection places panels and suggests alignment.
+   - User changes become persistent overrides.
+   - A relation-field relaxer may propose movement, but should not destroy carefully arranged viewpoints.
 
 ## Product Shape
 
-The tiled workspace fills the viewport with columns. Each column corresponds by default to one graph depth. Each page appears as a section inside a column.
+A bottomless tiled workspace has horizontal lanes and an unbounded vertical field.
 
 ```text
-┌──────────── depth 0 ────────────┬──────────── depth 1 ────────────┬──────────── depth 2 ────────────┐
-│ Root document                   │ Child A                         │ Grandchild A1                   │
-│ ┌─────────────────────────────┐ │ ┌─────────────────────────────┐ │ ┌─────────────────────────────┐ │
-│ │ section: scrollable content │ │ │ section: title-only         │ │ │ section: scrollable content │ │
-│ └─────────────────────────────┘ │ └─────────────────────────────┘ │ └─────────────────────────────┘ │
-│                                 │ Child B                         │ Floating shelf overlays / side  │
-└─────────────────────────────────┴─────────────────────────────────┴─────────────────────────────────┘
+viewport top
+┌──────────── depth 0 lane ────────────┬──────────── depth 1 lane ────────────┬──────────── depth 2 lane ────────────┐
+│ y=0    Root page                     │ y=16   Child from intro              │ y=40   Grandchild                    │
+│        ┌──────────────────────┐      │        ┌──────────────────────┐      │        ┌──────────────────────┐      │
+│        │ scrollable section   │╲     │        │ title-only / compact │╲     │        │ scrollable section   │      │
+│        └──────────────────────┘ ╲    │        └──────────────────────┘ ╲    │        └──────────────────────┘      │
+│                                  ╲   │       annotation tension         ╲   │                                      │
+│ y=520  Another root-adjacent      ╲  │ y=470 Child aligned to quote      ╲  │ y=500 Result page                    │
+│        ┌──────────────────────┐    ╲ │        ┌──────────────────────┐    ╲ │        ┌──────────────────────┐      │
+│        └──────────────────────┘     ╲│        └──────────────────────┘     ╲│        └──────────────────────┘      │
+│                                      │                                      │                                      │
+│                                      │                                      │                                      │
+│                                      ▼                                      ▼                                      ▼
+│                                  no bottom                              no bottom                              no bottom
 ```
 
-### Core Behaviors
+The user should feel that related pages tug on each other. When a page is focused, its parents, children, annotation sources, and annotation targets become visually active. Offscreen related pages get directional indicators.
 
-- Nodes are projected into depth columns by default.
-- Columns span the available screen width and have resizable widths.
-- Each page is rendered as a section with a resizable height.
-- If page content exceeds section height, the section content scrolls independently.
-- A page can be title-only, compact, normal, or expanded.
-- Page order inside each column is persistent per workspace.
-- Floating pages act as a scratchpad outside the column flow.
-- Workspaces persist different viewpoints over the same graph.
-- Keyboard navigation, resizing, moving, and search are first-class actions.
+## Relationship Types and Tension
 
-## Data Model
+### Structural parent-child edges
 
-The existing `RhizoFlow` should grow a view-state layer. The current flow schema can remain backward compatible by making this optional.
+Source: `edges` plus fallback `parentId`.
+
+Use for:
+
+- default lane/depth projection
+- left/right keyboard navigation
+- low/medium-strength relation lines
+- default placement of generated child pages near parent y
+
+Visual behavior:
+
+- parent-child lines use neutral/primary color
+- focused page strengthens its parent and children
+- hovered edge or panel can pulse related panels
+
+### Annotation relations
+
+Source: `annotations`.
+
+Use for:
+
+- exact source text anchoring
+- stronger visual tension line from source panel to target panel
+- generating/placing child near source text vertical anchor, when available
+- showing why a child page exists
+
+Visual behavior:
+
+- annotation lines inherit annotation color index
+- line anchor should prefer the visible highlighted mark in the source panel
+- if the mark is scrolled out of its section, fallback to section header/body midpoint and show an internal offscreen marker
+- focused target should reveal source annotation highlight strongly
+
+### Future semantic relations
+
+Source: search, embeddings, tags, manual links, backlinks.
+
+Use for:
+
+- optional soft tension
+- search result workspaces
+- “related but not structural” visual hints
+
+These should be lower priority than parent-child and annotation relations.
+
+## Data Model Revisions
+
+The earlier model treated `TiledColumn.pageIds` as primary. In a bottomless field, page identity and position should be primary.
 
 ```ts
 export type RhizoWorkspace = {
   id: string;
   name: string;
-  kind: 'tiled';
+  kind: 'bottomless-tiled'; // old 'tiled' can be normalized/migrated
   createdAt: string;
   updatedAt: string;
   projection: TiledProjection;
-  columns: TiledColumn[];
+  lanes: TiledLane[];
   pages: Record<string, TiledPageState>;
   floating: TiledFloatingPage[];
   focus: TiledFocus | null;
+  relationView: TiledRelationViewState;
   search?: TiledSearchState;
 };
 
-export type TiledProjection = {
-  mode: 'depth';
-  rootId?: string;
-  maxDepth?: number;
-  includeOrphans: boolean;
-};
-
-export type TiledColumn = {
+export type TiledLane = {
   id: string;
   depth: number;
+  x: number;
   width: number;
-  pageIds: string[];
   collapsed?: boolean;
 };
 
 export type TiledPageState = {
   nodeId: string;
-  display: 'title' | 'compact' | 'normal' | 'expanded';
+  laneId: string;
+  depth: number;
+  y: number;
   height: number;
+  display: 'title' | 'compact' | 'normal' | 'expanded';
   scrollTop: number;
   pinned?: boolean;
+  userPlaced?: boolean;
 };
 
-export type TiledFloatingPage = {
-  nodeId: string;
-  width: number;
-  height: number;
-  x?: number;
-  y?: number;
-  zIndex: number;
-  display: 'compact' | 'normal' | 'expanded';
-};
-
-export type TiledFocus = {
-  workspaceId: string;
-  region: 'columns' | 'floating' | 'search';
-  columnId?: string;
-  nodeId?: string;
+export type TiledRelationViewState = {
+  showStructural: boolean;
+  showAnnotations: boolean;
+  animateTension: boolean;
+  tensionMode: 'focus' | 'hover' | 'always';
 };
 ```
 
-### Flow Integration
+### Compatibility note
 
-Add optional workspace fields to `RhizoFlow`:
+The current implementation already has `RhizoWorkspace.kind = 'tiled'`, `columns`, and `columns[].pageIds`. That is acceptable as a stepping stone, but it is not the final shape.
 
-```ts
-export type RhizoFlow = {
-  // existing fields
-  workspaces?: RhizoWorkspace[];
-  activeWorkspaceId?: string;
-};
-```
+Migration path:
 
-Backward compatibility rule:
+1. Treat old `columns` as lanes.
+2. Convert `columns[].pageIds` into page states with increasing y positions.
+3. Preserve `pages[nodeId].height`, `display`, and `scrollTop`.
+4. Add default `relationView`.
+5. Continue saving in the new shape once the bottomless renderer is implemented.
 
-- If a loaded flow has no `workspaces`, create an in-memory default tiled workspace from the current graph.
-- Saving the flow persists workspace state only after the user switches to tiled view or changes tiled layout.
-- Existing canvas fields remain the canonical canvas viewpoint.
+## Projection and Initial Layout
 
-## Projection Algorithm
-
-The first implementation should derive columns from graph depth.
+Projection still starts from graph depth, but placement is y-based.
 
 1. Choose root:
-   - Prefer node with id `node-root`.
-   - Else prefer first node with no `parentId`.
-   - Else use first node.
-2. Build adjacency from edges and fallback parent relationships.
-3. BFS from root to assign minimum depth.
-4. Assign unvisited/orphan nodes to an `orphans` column or depth `0` depending workspace setting.
-5. For each depth, create a column.
-6. Respect persisted `column.pageIds` ordering when present.
-7. Append newly discovered nodes not in persisted order.
-8. Remove deleted node ids from workspace state during validation/normalization.
+   - Prefer `node-root`.
+   - Else first parentless node.
+   - Else first node.
+2. Build graph relations from `edges` and `parentId`.
+3. Assign primary depth by minimum reachable distance from root.
+4. Create one lane per depth.
+5. Place root near y=0.
+6. Place each child near its parent’s y, with collision avoidance.
+7. Place annotation-generated children near the source annotation anchor when known.
+8. Place orphans in an orphan lane or depth 0 fallback.
+9. If a saved page has `userPlaced`, do not auto-move it.
 
-DAG rule: if a node is reachable through multiple paths, use minimum depth as primary projection. Cross-depth edges stay visible through metadata/search/context, not through duplicate tiled sections by default.
+### Collision avoidance
 
-## Layout State Rules
+The field has no bottom, so collision handling should push panels downward, not compress them into screen height.
 
-### Columns
+A simple v1 algorithm:
 
-- Width is stored as a number, preferably CSS pixels for v1.
-- Later we can migrate to weighted fractions if responsive restoration becomes awkward.
-- Minimum width should be around `260px`; default width around `420px`.
-- Horizontal overflow is acceptable: users can pan/scroll through columns like sliding panes.
+```text
+for page in preferred-y order:
+  y = preferredY(page)
+  while overlaps existing panel in same lane:
+    y = nextBottom + gap
+  place page at y
+```
 
-### Sections
+Later, we can add a relaxation pass that reduces relation line crossings and aligns connected anchors.
 
-- Default height: `min(520px, viewportHeight * 0.62)` for root/active pages, `220px` for other pages.
-- Minimum section height: title-only height or about `72px`.
-- Page content scrollTop is saved per workspace/page.
-- Title-only mode still participates in ordering, focus, search, and commands.
+## Relation Field / Dynamic Tension
+
+### Visual layer
+
+Use an SVG or canvas overlay on top of the bottomless workspace.
+
+Each visible relation line has:
+
+- source node id
+- target node id
+- relation type: structural | annotation | semantic
+- source anchor rect
+- target anchor rect
+- strength
+- color
+- active state
+
+Preferred rendering:
+
+- curved spring-like path between lanes
+- low opacity when inactive
+- stronger stroke and glow for focused/hovered relations
+- slight animated dash/flow for active annotation relations
+- CSS transitions for panel movement and relation line updates
+
+### Tension strength
+
+Suggested relative weights:
+
+- focused annotation source/target: 1.0
+- focused parent/child: 0.75
+- visible annotation inactive: 0.45
+- visible structural inactive: 0.25
+- semantic suggestion: 0.15
+
+### Dynamic effects
+
+When focusing a panel:
+
+- strengthen relation lines touching it
+- gently highlight related panels
+- show offscreen arrows for related panels outside viewport
+- optionally scroll nearby parent/child into view if requested by keyboard navigation
+
+When hovering annotation highlight:
+
+- pulse exact target panel
+- strengthen source-to-target line
+- optionally show mini label with target title
+
+When a generated node streams:
+
+- create a temporary tension line from source annotation/parent to generating panel
+- pulse while loading
+- settle after completion
+
+## Keyboard Model Revisions
+
+The previous keyboard model treated columns as neighboring lists. That is wrong for this design.
+
+### Navigation
+
+- `ArrowLeft`: focus parent / strongest incoming structural relation.
+- `ArrowRight`: focus first child / strongest outgoing structural relation.
+- `ArrowUp`: focus nearest previous panel in the same lane by y.
+- `ArrowDown`: focus nearest next panel in the same lane by y.
+- `Alt+Left` / `Alt+Right`: move viewport horizontally between lanes without changing graph focus.
+- `Home`: focus root.
+- `Backspace`: focus previous focus history entry.
+
+### Layout commands
+
+- `[` / `]`: shorten/tallify focused panel.
+- `Space`: title-only toggle.
+- `Shift+Up` / `Shift+Down`: move focused panel y upward/downward in its lane.
+- Explicit command palette actions for structural changes:
+  - reparent focused page
+  - make focused page child of selected parent
+  - detach from parent
+  - move to floating scratchpad
+
+### Why left/right must be graph-aware
+
+In this workspace, horizontal position encodes relation depth. If left/right merely moves to the adjacent lane at similar y, it breaks the graph mental model. Left/right should follow relation intent, not geometry alone.
+
+## Panel Behavior
+
+### Section height and internal scroll
+
+A panel can have finite height and internal scroll, but the overall workspace is bottomless.
+
+This creates two scroll axes:
+
+1. Workspace scroll: moves through the bottomless relation field.
+2. Section scroll: moves within one page.
+
+Annotation anchors must account for both. If exact highlighted text is not visible inside a scrolled section, relation lines should fallback gracefully.
+
+### Title-only pages
+
+Title-only is not just collapsed UI. It is a low-mass panel in the relation field.
+
+- It still participates in relation lines.
+- It can receive focus.
+- It can be dragged or moved.
+- It can act as an offscreen/context marker.
 
 ### Floating
 
-Floating is a scratchpad, not a second source of truth.
+Floating remains a scratchpad, but in bottomless design it should feel like a temporary orbit, not a separate modal layer.
 
-- A floating page references a node id.
-- Floating pages are excluded from column layout only if user explicitly chooses `float-only`; v1 can allow the same node to appear in both places.
-- Floating state is workspace-specific.
-- Keyboard command should toggle current page into/out of floating.
+- Floating panels can still show relation lines back to lanes.
+- They may have absolute viewport positions.
+- They can be pinned or returned to their lane.
 
-## Keyboard and Command Model
+## Search Design Revisions
 
-Implement a command registry before adding many shortcuts.
+Search results should not only appear as a list. Search can generate a temporary viewpoint:
 
-```ts
-export type TiledCommand = {
-  id: string;
-  label: string;
-  run: (context: TiledCommandContext) => void;
-  when?: (context: TiledCommandContext) => boolean;
-};
-```
+- result panels can be pulled into a search lane
+- matched text can create temporary semantic tension
+- accepting a result can add it to the current bottomless workspace
+- search can spawn a new workspace/viewpoint
 
-Initial commands:
-
-- `focus.left` / `focus.right`: move to adjacent column.
-- `focus.up` / `focus.down`: move to previous/next section in current column.
-- `page.toggleTitleOnly`: toggle title-only mode.
-- `page.expand` / `page.compact`: change section display mode.
-- `page.resizeTaller` / `page.resizeShorter`: adjust focused section height.
-- `page.moveUp` / `page.moveDown`: reorder within column.
-- `page.moveLeft` / `page.moveRight`: move page to adjacent column override.
-- `page.floatToggle`: toggle scratchpad/floating state.
-- `workspace.next` / `workspace.prev`: switch viewpoints.
-- `search.open`: focus search/command palette.
-
-Suggested defaults:
-
-- Arrow keys for normal navigation when not editing text.
-- `h/j/k/l` optionally when a Vim mode is enabled.
-- `Space` toggles title-only.
-- `[` / `]` adjust section height.
-- `Shift+J` / `Shift+K` reorder sections.
-- `/` opens search.
-- `Ctrl/Cmd+K` opens command palette.
-
-## Search Design
-
-Search should index graph content, not only visible tiled pages.
-
-MVP index fields:
-
-- node title
-- node Markdown content
-- annotation text
-- parent title
-- depth/workspace column label
-
-Chinese-friendly search should not rely on whitespace tokenization. A pragmatic v1:
+Chinese search remains important:
 
 1. Normalize full-width/half-width variants and lowercase Latin.
 2. Use `Intl.Segmenter('zh')` where available.
-3. Add CJK character bigrams/trigrams as fallback tokens.
-4. Optionally add pinyin initials later.
-
-Candidate libraries:
-
-- Orama with Mandarin tokenizer for a higher-level search engine.
-- FlexSearch with custom CJK tokenizer for performance.
-- MiniSearch if we want minimal dependency size and full tokenizer control.
-
-Search result actions:
-
-- focus page in current workspace
-- open result in floating scratchpad
-- add result to current column
-- create a new workspace from search results
+3. Add CJK bigram/trigram fallback tokens.
+4. Add pinyin initials later.
 
 ## Rendering Strategy
 
-Tiled sections should reuse existing rendering infrastructure:
+The current DOM implementation can remain temporarily, but the bottomless relation field will probably need a cleaner renderer boundary.
 
-- Static node content: use current `renderMarkdown()` path.
-- Active LLM stream: use the existing lazy Streamdown island.
-- Annotation wrapping: reuse `annotations.ts` and logical text utilities.
+Recommended direction:
 
-This argues for a React island that owns tiled layout and lifecycle, while existing canvas remains vanilla TypeScript.
+- Keep current canvas app vanilla.
+- Move bottomless tiled workspace toward a renderer island once interactions grow.
+- The island owns:
+  - lane/page layout
+  - relation overlay
+  - keyboard focus model
+  - layout commands
+- It still calls shared app actions for graph mutations and LLM generation.
 
-Possible island boundary:
+Important: relation overlay and panel layout must share the same coordinate model. If layout remains imperative DOM, draw relation lines from measured DOM rects. If layout becomes React, use refs/layout effects but keep relation calculation pure where possible.
 
-```ts
-renderTiledWorkspace(container, {
-  flow,
-  workspace,
-  actions,
-});
-```
+## Updated Implementation Plan
 
-The React island should not mutate global state directly. It receives state and calls typed actions such as `updateWorkspacePageState`, `moveWorkspacePage`, `focusNode`, and `openNodeOnCanvas`.
+### Phase A: Reframe existing MVP
 
-## Implementation Plan
+- Rename conceptual model from “tiled workspace” to “bottomless relation field.”
+- Keep current basic UI as a stepping stone.
+- Change left/right keyboard navigation to parent/child relation navigation.
+- Add relation cues between visible panels.
+- Stop treating cross-column movement as basic navigation.
 
-### Phase 1: Schema and Projection
+### Phase B: Bottomless geometry model
 
-- Add workspace/tiled types in shared code.
-- Add normalizers for optional workspace state.
-- Add pure depth projection function with tests.
-- Persist optional workspaces in flow JSON.
-- Do not render UI yet.
+- Add `lane` + `page.y` model.
+- Migrate existing `columns/pageIds` into lane/page positions.
+- Render panels at y positions in bottomless lanes.
+- Workspace scroll becomes primary; section scroll remains internal.
 
-### Phase 2: Read-Only Tiled View
+### Phase C: Relation overlay
 
-- Add a view switcher: canvas / tiled.
-- Render columns and sections from projected graph.
-- Use static Markdown rendering inside sections.
-- No dragging/resizing yet.
-- Keyboard focus outline only.
+- Draw structural parent-child lines.
+- Draw annotation lines using exact visible annotation marks when possible.
+- Add focus/hover highlighting and offscreen indicators.
+- Add lightweight tension animations.
 
-### Phase 3: Persistent Layout Controls
+### Phase D: Layout relaxation
 
-- Resizable column widths.
-- Resizable section heights.
-- Per-section scroll position persistence.
-- Title-only / compact / normal display modes.
-- Reorder pages within a column.
+- Initial relation-aware placement: children near parents, annotation children near source anchor.
+- Collision avoidance with downward push.
+- Optional “relax viewpoint” command.
+- Preserve user-placed overrides.
 
-### Phase 4: Floating Scratchpad and Workspaces
+### Phase E: Floating, workspace management, search
 
-- Floating shelf/overlay for temporary pages.
-- Workspace create/rename/duplicate/delete.
-- Different page ordering/display states per workspace.
-- Commands for moving pages between tiled/floating.
+- Floating panels with relation lines.
+- Workspace duplicate/rename/search-generated viewpoints.
+- Chinese fuzzy search and command palette.
 
-### Phase 5: Search and Command Palette
+## Immediate Code Corrections Needed
 
-- Add local search index.
-- Add Chinese-friendly tokenization.
-- Add command palette with result actions.
-- Support search-generated workspace/viewpoint.
+The current implementation still has two wrong assumptions from the earlier design:
 
-## Open Questions
+1. It uses flex columns and page order as primary layout.
+2. Arrow left/right currently moves to adjacent columns, but it should navigate parent/child relations.
 
-1. Should column width be stored as pixels or relative weights? Pixels are simpler for v1; weights are better for responsive restoration.
-2. Should a page moved to a custom column change its graph depth override, or only the workspace layout? Prefer workspace-only.
-3. Should floating pages duplicate column presence or remove from columns while floating? Prefer duplicate in v1, optional float-only later.
-4. Should workspaces live inside flow JSON immediately, or in browser local storage until user saves? Prefer flow JSON for portability, with auto-created defaults.
-5. Should tiled view show graph edges visually? Probably not in v1; show parent/child metadata and navigation affordances instead.
+Before adding more UI features, fix left/right navigation semantics and add visible relation tension cues. Then migrate to bottomless y-positioned lanes.
 
 ## References
 
 - i3 User Guide: https://i3wm.org/docs/userguide.html
-- Sway: https://swaywm.org/
 - Zellij layouts: https://zellij.dev/documentation/layouts.html
-- React Mosaic: https://github.com/nomcopter/react-mosaic
-- Dockview: https://dockview.dev/
-- GoldenLayout: https://golden-layout.com/
-- Lumino: https://github.com/jupyterlab/lumino
 - JSON Canvas: https://jsoncanvas.org/
 - Logseq: https://github.com/logseq/logseq
 - AFFiNE: https://github.com/toeverything/AFFiNE
