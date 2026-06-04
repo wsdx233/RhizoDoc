@@ -22,6 +22,10 @@ RhizoDoc is a local-first AI document workspace that turns long documents, notes
 - **Provider flexibility**: uses Pi's model registry/auth settings by default, with RhizoDoc-specific overrides in `rhizodoc.config.json`.
 - **Runtime validation**: shared browser/server schemas validate config, LLM payloads, and flow JSON.
 
+## Design Notes
+
+- Planned tiled workspace/viewpoint design: `docs/tiled-workspace-design.md`
+
 ## Tech Stack
 
 - Node.js 22.19+
