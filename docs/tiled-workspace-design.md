@@ -1,424 +1,207 @@
-# Bottomless Tiled Workspace Design
+# Tiled Relation Field Design
 
 ## Purpose
 
-The second RhizoDoc frontend is not a conventional tiled window manager. It is a **bottomless relation field** over the same document graph.
+The second RhizoDoc frontend is a **tiled relation field** over the same document graph. It should borrow the feel of a tiling window manager: every depth column is a tiled stack, panels are contiguous, ordering is explicit, and keyboard operations can move focus or swap neighboring panels.
 
-The infinite canvas remains the free spatial map. The bottomless tiled workspace is a dense reading/synthesis field: pages are constrained into depth/lane columns, but the vertical dimension has no bottom. Parent-child edges and annotation links create visible and interactive tension between panels.
+The infinite canvas remains the free spatial map. The tiled relation field is the dense reading/synthesis view: horizontal position is graph depth, vertical order is a tiling stack inside each depth, and the current focus can shift neighboring columns as whole stacks so the most relevant related panels appear near the reading context.
 
-This replaces the earlier assumption that the view should simply fill the screen with a finite set of columns. Columns are still useful, but they are not the core idea. The core idea is:
+> Graph depth decides columns. Tiling order decides each column. Focus context decides relative column offsets.
 
-> A graph-projected, bottomless, keyboardable document field whose panels are shaped by relationship tension.
+## Core Principles
 
-## Revised Core Principles
+1. **Depth columns are semantic**
+   - A node's column is determined by graph depth: root at depth 0, children at depth +1, DAG nodes at minimum reachable depth.
+   - Layout state must not silently move a node across depth columns.
+   - Reparenting or graph edits are explicit content operations, not layout operations.
 
-1. **Bottomless, not screen-fitted**
-   - The workspace is allowed to grow downward indefinitely.
-   - A viewport reveals a moving window over this field.
-   - The goal is not to pack everything into the current screen height.
-   - The current screen is only a lens over a larger relation surface.
+2. **Each column is a tiling stack**
+   - Panels in one column are stacked contiguously, like a tiling window manager.
+   - There are no arbitrary holes between neighboring panels in the same column.
+   - The persisted layout primitive is per-column order, i.e. `columns[].pageIds` for the matching depth.
+   - Users must be able to swap a focused panel with its previous/next neighbor by keyboard.
 
-2. **Columns are lanes, not containers with bottoms**
-   - Depth columns still provide left-to-right structure.
-   - Each column is a vertical lane with unbounded length.
-   - A panel has a lane/depth, y position, height, display mode, and scroll position.
-   - Page order can be derived from y positions, but order is not the whole layout.
+3. **“Loose” means relative column offset, not floating panels**
+   - Left and right depth columns can be vertically offset relative to the focused column.
+   - This offset is calculated from the current focus context.
+   - The offset moves a whole column stack, preserving that column's tiling continuity.
+   - Individual panels do not drift freely inside the depth column.
 
-3. **Relationships create tension**
-   - Parent-child edges, annotation links, and future semantic links should pull related panels toward meaningful vertical alignment.
-   - The field should show these pulls visually: spring curves, glow, focus halos, offscreen indicators.
-   - The layout can offer automatic/soft relaxation, but user positioning remains authoritative.
+4. **Focus context optimizes what is nearby**
+   - When reading the focused node, neighboring columns should automatically put likely useful nodes near the focused panel.
+   - Strong candidates include parent, children, annotation source/target, and later semantic matches.
+   - Annotation relations should have stronger pull than ordinary structural edges because they point to exact text spans.
 
-4. **Left/right navigation follows graph structure**
-   - Left/right should not mean “adjacent column item.”
-   - Left means parent / strongest incoming structural relation.
-   - Right means child / strongest outgoing structural relation.
-   - Up/down navigate local vertical neighborhood within the current lane.
-   - Explicit reparenting or cross-lane layout movement should be separate commands, not basic navigation.
-
-5. **Annotations are first-class spatial relations**
-   - An annotation is not just highlighted text plus a child node.
-   - It is a relation with a source anchor inside one page and a target panel elsewhere.
-   - In the tiled workspace, annotation links should create stronger visual tension than ordinary structural edges because they point to exact text spans.
+5. **Navigation is semantic where horizontal, tiled where vertical**
+   - Left/right keyboard navigation follows graph relations: parent/strongest incoming, child/strongest outgoing.
+   - Up/down navigates the previous/next panel in the same depth stack.
+   - Shift+Up / Shift+Down swaps the focused panel with the previous/next panel in its stack.
 
 6. **Content and viewpoint remain separate**
-   - Nodes, edges, annotations, and LLM metadata remain content.
-   - Lane choice, y position, height, title-only state, scroll position, floating state, and focus are viewpoint state.
-   - Workspaces are saved viewpoints over the same graph.
-
-7. **Manual layout beats automatic layout**
-   - Automatic projection places panels and suggests alignment.
-   - User changes become persistent overrides.
-   - A relation-field relaxer may propose movement, but should not destroy carefully arranged viewpoints.
+   - Nodes, edges, annotations, and LLM metadata are content.
+   - Column order, panel height/display/scroll, focus, search, and floating state are viewpoint/workspace state.
+   - Graph depth is derived from content; stack order is workspace state.
 
 ## Product Shape
 
-A bottomless tiled workspace has horizontal lanes and an unbounded vertical field.
-
 ```text
-viewport top
-┌──────────── depth 0 lane ────────────┬──────────── depth 1 lane ────────────┬──────────── depth 2 lane ────────────┐
-│ y=0    Root page                     │ y=16   Child from intro              │ y=40   Grandchild                    │
-│        ┌──────────────────────┐      │        ┌──────────────────────┐      │        ┌──────────────────────┐      │
-│        │ scrollable section   │╲     │        │ title-only / compact │╲     │        │ scrollable section   │      │
-│        └──────────────────────┘ ╲    │        └──────────────────────┘ ╲    │        └──────────────────────┘      │
-│                                  ╲   │       annotation tension         ╲   │                                      │
-│ y=520  Another root-adjacent      ╲  │ y=470 Child aligned to quote      ╲  │ y=500 Result page                    │
-│        ┌──────────────────────┐    ╲ │        ┌──────────────────────┐    ╲ │        ┌──────────────────────┐      │
-│        └──────────────────────┘     ╲│        └──────────────────────┘     ╲│        └──────────────────────┘      │
-│                                      │                                      │                                      │
-│                                      │                                      │                                      │
-│                                      ▼                                      ▼                                      ▼
-│                                  no bottom                              no bottom                              no bottom
+                         current focus context
+
+Depth 0 stack              Depth 1 stack                 Depth 2 stack
+┌───────────────┐          ┌───────────────┐             ┌───────────────┐
+│ Root          │          │ Child A       │             │ Grandchild X  │
+├───────────────┤          ├───────────────┤             ├───────────────┤
+│ Other root-ish│          │ Focused node  │◀──────────▶ │ Related child │
+├───────────────┤          ├───────────────┤             ├───────────────┤
+│ ...           │          │ Child B       │             │ ...           │
+└───────────────┘          └───────────────┘             └───────────────┘
+       ▲                         ▲                              ▲
+       │ whole-column offset     │ focus column                 │ whole-column offset
 ```
 
-The user should feel that related pages tug on each other. When a page is focused, its parents, children, annotation sources, and annotation targets become visually active. Offscreen related pages get directional indicators.
+The stacks remain tiled: panel-to-panel continuity inside a column is preserved. A focus-context layout pass can offset the left and right stacks so the most relevant panels line up around the focused panel.
 
-## Relationship Types and Tension
+## Data Model
 
-### Structural parent-child edges
-
-Source: `edges` plus fallback `parentId`.
-
-Use for:
-
-- default lane/depth projection
-- left/right keyboard navigation
-- low/medium-strength relation lines
-- default placement of generated child pages near parent y
-
-Visual behavior:
-
-- parent-child lines use neutral/primary color
-- focused page strengthens its parent and children
-- hovered edge or panel can pulse related panels
-
-### Annotation relations
-
-Source: `annotations`.
-
-Use for:
-
-- exact source text anchoring
-- stronger visual tension line from source panel to target panel
-- generating/placing child near source text vertical anchor, when available
-- showing why a child page exists
-
-Visual behavior:
-
-- annotation lines inherit annotation color index
-- line anchor should prefer the visible highlighted mark in the source panel
-- if the mark is scrolled out of its section, fallback to section header/body midpoint and show an internal offscreen marker
-- focused target should reveal source annotation highlight strongly
-
-### Future semantic relations
-
-Source: search, embeddings, tags, manual links, backlinks.
-
-Use for:
-
-- optional soft tension
-- search result workspaces
-- “related but not structural” visual hints
-
-These should be lower priority than parent-child and annotation relations.
-
-## Data Model Revisions
-
-The earlier model treated `TiledColumn.pageIds` as primary. In a bottomless field, page identity and position should be primary.
+The current model is close if interpreted correctly:
 
 ```ts
 export type RhizoWorkspace = {
   id: string;
   name: string;
-  kind: 'bottomless-tiled'; // old 'tiled' can be normalized/migrated
-  createdAt: string;
-  updatedAt: string;
+  kind: 'bottomless-tiled'; // old 'tiled' normalizes here
   projection: TiledProjection;
-  lanes: TiledLane[];
+  columns: TiledColumn[];   // one stack per graph depth
   pages: Record<string, TiledPageState>;
   floating: TiledFloatingPage[];
   focus: TiledFocus | null;
-  relationView: TiledRelationViewState;
-  search?: TiledSearchState;
 };
 
-export type TiledLane = {
+export type TiledColumn = {
   id: string;
-  depth: number;
-  x: number;
+  depth: number;            // graph depth, not arbitrary lane
   width: number;
+  pageIds: string[];        // stack order only for nodes whose projected depth matches this column
   collapsed?: boolean;
 };
 
 export type TiledPageState = {
   nodeId: string;
-  laneId: string;
-  depth: number;
-  y: number;
-  height: number;
   display: 'title' | 'compact' | 'normal' | 'expanded';
+  height: number;
   scrollTop: number;
   pinned?: boolean;
-  userPlaced?: boolean;
-};
-
-export type TiledRelationViewState = {
-  showStructural: boolean;
-  showAnnotations: boolean;
-  animateTension: boolean;
-  tensionMode: 'focus' | 'hover' | 'always';
 };
 ```
 
-### Compatibility note
+Important invariants:
 
-The current implementation already has `RhizoWorkspace.kind = 'tiled'`, `columns`, and `columns[].pageIds`. That is acceptable as a stepping stone, but it is not the final shape.
+- `TiledColumn.depth` is semantic graph depth.
+- `columns[].pageIds` stores order within that depth only.
+- If persisted `pageIds` place a node in the wrong depth, normalization/projection ignores that membership.
+- Relative column offsets are computed render state, not persisted per-panel free coordinates.
 
-Migration path:
+## Projection and Layout
 
-1. Treat old `columns` as lanes.
-2. Convert `columns[].pageIds` into page states with increasing y positions.
-3. Preserve `pages[nodeId].height`, `display`, and `scrollTop`.
-4. Add default `relationView`.
-5. Continue saving in the new shape once the bottomless renderer is implemented.
+1. Select root: requested root if valid, else `node-root`, else first parentless node, else first node.
+2. Build relations from `edges` plus `parentId` fallback.
+3. Assign each node a primary depth by minimum reachable distance from root.
+4. Create one column stack per depth.
+5. Preserve persisted order for page ids that still belong to that depth.
+6. Append new nodes at the end of their depth stack.
+7. Compute base stack layout: each panel starts immediately after the previous panel.
+8. Compute contextual column offsets from current focus:
+   - focused column offset = 0;
+   - for each other column, choose the highest-scoring related panel in that column;
+   - offset the whole stack so that panel's center aligns near the focused panel's center.
 
-## Projection and Initial Layout
+## Relationship Tension
 
-Projection still starts from graph depth, but placement is y-based.
+Relations should be visible as a dynamic field over the tiled stacks.
 
-1. Choose root:
-   - Prefer `node-root`.
-   - Else first parentless node.
-   - Else first node.
-2. Build graph relations from `edges` and `parentId`.
-3. Assign primary depth by minimum reachable distance from root.
-4. Create one lane per depth.
-5. Place root near y=0.
-6. Place each child near its parent’s y, with collision avoidance.
-7. Place annotation-generated children near the source annotation anchor when known.
-8. Place orphans in an orphan lane or depth 0 fallback.
-9. If a saved page has `userPlaced`, do not auto-move it.
+Structural relations:
 
-### Collision avoidance
+- Parent-child edges use neutral/primary curves.
+- Focused panel strengthens parent and child paths.
+- Used for left/right navigation and context offset scoring.
 
-The field has no bottom, so collision handling should push panels downward, not compress them into screen height.
+Annotation relations:
 
-A simple v1 algorithm:
+- Annotation source/target lines inherit annotation color.
+- Prefer exact highlighted mark as source anchor when visible.
+- Stronger than structural edges for focus-context layout scoring.
+- Used to pull annotation-related panels into view around the focused panel.
 
-```text
-for page in preferred-y order:
-  y = preferredY(page)
-  while overlaps existing panel in same lane:
-    y = nextBottom + gap
-  place page at y
-```
+Future semantic relations:
 
-Later, we can add a relaxation pass that reduces relation line crossings and aligns connected anchors.
+- Search/embedding/tag/backlink relations can add weaker soft pulls.
+- These should not override explicit annotation or parent-child context.
 
-## Relation Field / Dynamic Tension
+## Keyboard Model
 
-### Visual layer
-
-Use an SVG or canvas overlay on top of the bottomless workspace.
-
-Each visible relation line has:
-
-- source node id
-- target node id
-- relation type: structural | annotation | semantic
-- source anchor rect
-- target anchor rect
-- strength
-- color
-- active state
-
-Preferred rendering:
-
-- curved spring-like path between lanes
-- low opacity when inactive
-- stronger stroke and glow for focused/hovered relations
-- slight animated dash/flow for active annotation relations
-- CSS transitions for panel movement and relation line updates
-
-### Tension strength
-
-Suggested relative weights:
-
-- focused annotation source/target: 1.0
-- focused parent/child: 0.75
-- visible annotation inactive: 0.45
-- visible structural inactive: 0.25
-- semantic suggestion: 0.15
-
-### Dynamic effects
-
-When focusing a panel:
-
-- strengthen relation lines touching it
-- gently highlight related panels
-- show offscreen arrows for related panels outside viewport
-- optionally scroll nearby parent/child into view if requested by keyboard navigation
-
-When hovering annotation highlight:
-
-- pulse exact target panel
-- strengthen source-to-target line
-- optionally show mini label with target title
-
-When a generated node streams:
-
-- create a temporary tension line from source annotation/parent to generating panel
-- pulse while loading
-- settle after completion
-
-## Keyboard Model Revisions
-
-The previous keyboard model treated columns as neighboring lists. That is wrong for this design.
-
-### Navigation
+Navigation:
 
 - `ArrowLeft`: focus parent / strongest incoming structural relation.
-- `ArrowRight`: focus first child / strongest outgoing structural relation.
-- `ArrowUp`: focus nearest previous panel in the same lane by y.
-- `ArrowDown`: focus nearest next panel in the same lane by y.
-- `Alt+Left` / `Alt+Right`: move viewport horizontally between lanes without changing graph focus.
+- `ArrowRight`: focus child / strongest outgoing structural relation.
+- `ArrowUp`: focus previous panel in the same depth stack.
+- `ArrowDown`: focus next panel in the same depth stack.
 - `Home`: focus root.
 - `Backspace`: focus previous focus history entry.
 
-### Layout commands
+Tiling layout operations:
 
+- `Shift+ArrowUp`: swap focused panel with previous panel in the same depth stack.
+- `Shift+ArrowDown`: swap focused panel with next panel in the same depth stack.
 - `[` / `]`: shorten/tallify focused panel.
 - `Space`: title-only toggle.
-- `Shift+Up` / `Shift+Down`: move focused panel y upward/downward in its lane.
-- Explicit command palette actions for structural changes:
-  - reparent focused page
-  - make focused page child of selected parent
-  - detach from parent
-  - move to floating scratchpad
 
-### Why left/right must be graph-aware
+Graph/content operations remain explicit command-palette actions:
 
-In this workspace, horizontal position encodes relation depth. If left/right merely moves to the adjacent lane at similar y, it breaks the graph mental model. Left/right should follow relation intent, not geometry alone.
-
-## Panel Behavior
-
-### Section height and internal scroll
-
-A panel can have finite height and internal scroll, but the overall workspace is bottomless.
-
-This creates two scroll axes:
-
-1. Workspace scroll: moves through the bottomless relation field.
-2. Section scroll: moves within one page.
-
-Annotation anchors must account for both. If exact highlighted text is not visible inside a scrolled section, relation lines should fallback gracefully.
-
-### Title-only pages
-
-Title-only is not just collapsed UI. It is a low-mass panel in the relation field.
-
-- It still participates in relation lines.
-- It can receive focus.
-- It can be dragged or moved.
-- It can act as an offscreen/context marker.
-
-### Floating
-
-Floating remains a scratchpad, but in bottomless design it should feel like a temporary orbit, not a separate modal layer.
-
-- Floating panels can still show relation lines back to lanes.
-- They may have absolute viewport positions.
-- They can be pinned or returned to their lane.
-
-## Search Design Revisions
-
-Search results should not only appear as a list. Search can generate a temporary viewpoint:
-
-- result panels can be pulled into a search lane
-- matched text can create temporary semantic tension
-- accepting a result can add it to the current bottomless workspace
-- search can spawn a new workspace/viewpoint
-
-Chinese search remains important:
-
-1. Normalize full-width/half-width variants and lowercase Latin.
-2. Use `Intl.Segmenter('zh')` where available.
-3. Add CJK bigram/trigram fallback tokens.
-4. Add pinyin initials later.
+- reparent focused page;
+- make focused page child of selected parent;
+- detach from parent;
+- move to floating scratchpad.
 
 ## Rendering Strategy
 
-The current DOM implementation can remain temporarily, but the bottomless relation field will probably need a cleaner renderer boundary.
+The current DOM implementation can remain for MVP:
 
-Recommended direction:
+- render depth columns as absolute stack lanes;
+- render each panel at its computed stack y plus contextual column offset;
+- draw relation SVG paths from measured DOM anchors;
+- recalculate offsets and relation paths when focus, order, height, scroll, or annotations change.
 
-- Keep current canvas app vanilla.
-- Move bottomless tiled workspace toward a renderer island once interactions grow.
-- The island owns:
-  - lane/page layout
-  - relation overlay
-  - keyboard focus model
-  - layout commands
-- It still calls shared app actions for graph mutations and LLM generation.
+A future renderer island may own the tiled workspace once interactions grow, but the pure projection/order rules should remain shared TypeScript.
 
-Important: relation overlay and panel layout must share the same coordinate model. If layout remains imperative DOM, draw relation lines from measured DOM rects. If layout becomes React, use refs/layout effects but keep relation calculation pure where possible.
+## Implementation Phases
 
-## Updated Implementation Plan
+### Phase A: Correct MVP semantics
 
-### Phase A: Reframe existing MVP
+- Keep depth-derived columns.
+- Reject cross-depth membership as a layout override.
+- Render columns as contiguous tiling stacks.
+- Add relation overlay.
+- Make left/right graph-aware.
+- Make up/down stack-aware.
+- Add Shift+Up/Down stack swapping.
+- Add computed focus-context offsets for neighboring columns.
 
-- Rename conceptual model from “tiled workspace” to “bottomless relation field.”
-- Keep current basic UI as a stepping stone.
-- Change left/right keyboard navigation to parent/child relation navigation.
-- Add relation cues between visible panels.
-- Stop treating cross-column movement as basic navigation.
+### Phase B: Better context scoring
 
-### Phase B: Bottomless geometry model
+- Score annotation source/target strongest.
+- Score parent/child next.
+- Score siblings/backlinks/semantic search lower.
+- Add tie-breaking based on recency, current viewport, and node generation source.
 
-- Add `lane` + `page.y` model.
-- Migrate existing `columns/pageIds` into lane/page positions.
-- Render panels at y positions in bottomless lanes.
-- Workspace scroll becomes primary; section scroll remains internal.
+### Phase C: Offscreen and relaxation cues
 
-### Phase C: Relation overlay
+- Add offscreen indicators for related panels.
+- Add hover/focus line emphasis.
+- Add optional “optimize current context” command that reorders stacks, but never silently changes graph depth.
 
-- Draw structural parent-child lines.
-- Draw annotation lines using exact visible annotation marks when possible.
-- Add focus/hover highlighting and offscreen indicators.
-- Add lightweight tension animations.
+### Phase D: Search and workspace features
 
-### Phase D: Layout relaxation
-
-- Initial relation-aware placement: children near parents, annotation children near source anchor.
-- Collision avoidance with downward push.
-- Optional “relax viewpoint” command.
-- Preserve user-placed overrides.
-
-### Phase E: Floating, workspace management, search
-
-- Floating panels with relation lines.
-- Workspace duplicate/rename/search-generated viewpoints.
+- Search-generated viewpoints.
+- Floating scratchpad with relation lines back to depth stacks.
+- Workspace duplicate/rename/manage UI.
 - Chinese fuzzy search and command palette.
-
-## Immediate Code Corrections Needed
-
-The current implementation still has two wrong assumptions from the earlier design:
-
-1. It uses flex columns and page order as primary layout.
-2. Arrow left/right currently moves to adjacent columns, but it should navigate parent/child relations.
-
-Before adding more UI features, fix left/right navigation semantics and add visible relation tension cues. Then migrate to bottomless y-positioned lanes.
-
-## References
-
-- i3 User Guide: https://i3wm.org/docs/userguide.html
-- Zellij layouts: https://zellij.dev/documentation/layouts.html
-- JSON Canvas: https://jsoncanvas.org/
-- Logseq: https://github.com/logseq/logseq
-- AFFiNE: https://github.com/toeverything/AFFiNE
-- BlockSuite: https://github.com/toeverything/BlockSuite
-- SiYuan: https://github.com/siyuan-note/siyuan
-- Orama Mandarin tokenizer: https://docs.orama.com/docs/orama-js/supported-languages/using-chinese-with-orama
-- FlexSearch: https://github.com/nextapps-de/flexsearch
-- MiniSearch: https://lucaong.github.io/minisearch/

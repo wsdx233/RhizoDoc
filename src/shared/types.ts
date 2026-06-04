@@ -109,6 +109,19 @@ export type TiledPageState = {
   pinned?: boolean;
 };
 
+export type TiledPageLayout = {
+  nodeId: string;
+  columnId: string;
+  depth: number;
+  order: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  display: TiledPageDisplay;
+  columnOffsetY: number;
+};
+
 export type TiledFloatingPage = {
   nodeId: string;
   width: number;
@@ -134,7 +147,7 @@ export type TiledSearchState = {
 export type RhizoWorkspace = {
   id: string;
   name: string;
-  kind: 'tiled';
+  kind: 'tiled' | 'bottomless-tiled';
   createdAt: string;
   updatedAt: string;
   projection: TiledProjection;

@@ -6,6 +6,7 @@ import type {
   TiledFloatingPage,
   TiledFocus,
   TiledPageDisplay,
+  TiledPageLayout,
   TiledPageState,
   TiledProjection,
 } from './types.js';
@@ -17,12 +18,17 @@ export const MAX_TILED_COLUMN_WIDTH = 900;
 export const DEFAULT_TILED_SECTION_HEIGHT = 360;
 export const MIN_TILED_SECTION_HEIGHT = 64;
 export const MAX_TILED_SECTION_HEIGHT = 2400;
+export const DEFAULT_TILED_LANE_GAP = 14;
+export const DEFAULT_TILED_FIELD_TOP = 56;
+export const DEFAULT_TILED_COLUMN_HEADER_HEIGHT = 52;
+export const TILED_TITLE_ONLY_HEIGHT = 56;
 
 export type TiledProjectionResult = {
   rootId: string | null;
   depths: Record<string, number>;
   orphanNodeIds: string[];
   columns: TiledColumn[];
+  pageLayouts: Record<string, TiledPageLayout>;
 };
 
 type WorkspaceContext = {
@@ -36,7 +42,7 @@ export function createDefaultTiledWorkspace(nodes: RhizoNode[], edges: RhizoEdge
   return {
     id: DEFAULT_TILED_WORKSPACE_ID,
     name: '默认平铺视图',
-    kind: 'tiled',
+    kind: 'bottomless-tiled',
     createdAt: now,
     updatedAt: now,
     projection,
@@ -71,7 +77,7 @@ export function normalizeTiledWorkspace(
   seenWorkspaceIds = new Set<string>(),
 ): RhizoWorkspace | null {
   if (!isPlainObject(rawWorkspace)) return null;
-  if (rawWorkspace.kind && rawWorkspace.kind !== 'tiled') return null;
+  if (rawWorkspace.kind && rawWorkspace.kind !== 'tiled' && rawWorkspace.kind !== 'bottomless-tiled') return null;
 
   const fallbackId = index === 0 ? DEFAULT_TILED_WORKSPACE_ID : `${DEFAULT_TILED_WORKSPACE_ID}-${index + 1}`;
   const id = uniqueId(cleanString(rawWorkspace.id, fallbackId), fallbackId, seenWorkspaceIds);
@@ -82,12 +88,13 @@ export function normalizeTiledWorkspace(
   const projected = projectTiledColumns(context.nodes, context.edges, {
     projection,
     columns: Array.isArray(rawWorkspace.columns) ? rawWorkspace.columns : [],
+    pages: pageOverrides,
   });
 
   return {
     id,
     name: cleanString(rawWorkspace.name, index === 0 ? '默认平铺视图' : `平铺视图 ${index + 1}`).slice(0, 80),
-    kind: 'tiled',
+    kind: 'bottomless-tiled',
     createdAt: cleanString(rawWorkspace.createdAt, now),
     updatedAt: cleanString(rawWorkspace.updatedAt, now),
     projection,
@@ -101,10 +108,10 @@ export function normalizeTiledWorkspace(
 export function projectTiledColumns(
   nodes: RhizoNode[],
   edges: RhizoEdge[],
-  workspace: Pick<RhizoWorkspace, 'projection'> & Partial<Pick<RhizoWorkspace, 'columns'>> = { projection: { mode: 'depth', includeOrphans: true } },
+  workspace: Pick<RhizoWorkspace, 'projection'> & Partial<Pick<RhizoWorkspace, 'columns' | 'pages'>> = { projection: { mode: 'depth', includeOrphans: true } },
 ): TiledProjectionResult {
   const nodeIds = new Set(nodes.map((node) => node.id).filter(Boolean));
-  if (nodeIds.size === 0) return { rootId: null, depths: {}, orphanNodeIds: [], columns: [] };
+  if (nodeIds.size === 0) return { rootId: null, depths: {}, orphanNodeIds: [], columns: [], pageLayouts: {} };
 
   const projection = normalizeTiledProjection(workspace.projection);
   const rootId = selectProjectionRoot(nodes, nodeIds, projection.rootId);
@@ -142,6 +149,7 @@ export function projectTiledColumns(
     .forEach(([depth, column]) => {
       for (const pageId of column.pageIds || []) {
         if (!visibleNodeIds.has(pageId) || persistedPageIds.has(pageId)) continue;
+        if (depths[pageId] !== depth) continue;
         persistedPageIds.add(pageId);
         const columnPageIds = persistedPageIdsByDepth.get(depth) || [];
         columnPageIds.push(pageId);
@@ -161,7 +169,7 @@ export function projectTiledColumns(
     ))
     .filter((column) => column.pageIds.length > 0);
 
-  return { rootId, depths, orphanNodeIds, columns };
+  return { rootId, depths, orphanNodeIds, columns, pageLayouts: buildTiledPageLayouts(columns, workspace.pages || {}) };
 }
 
 function normalizeProjectedColumn(
@@ -194,6 +202,38 @@ function normalizeProjectedColumn(
   };
 }
 
+function buildTiledPageLayouts(columns: TiledColumn[], pages: Record<string, TiledPageState>): Record<string, TiledPageLayout> {
+  const baseLayouts: Record<string, TiledPageLayout> = {};
+  let x = 0;
+
+  for (const column of columns) {
+    let yCursor = DEFAULT_TILED_COLUMN_HEADER_HEIGHT;
+    column.pageIds.forEach((nodeId, order) => {
+      const page = pages[nodeId];
+      const display = page?.display || 'normal';
+      const height = display === 'title'
+        ? TILED_TITLE_ONLY_HEIGHT
+        : clampNumber(page?.height, MIN_TILED_SECTION_HEIGHT, MAX_TILED_SECTION_HEIGHT, DEFAULT_TILED_SECTION_HEIGHT);
+      baseLayouts[nodeId] = {
+        nodeId,
+        columnId: column.id,
+        depth: column.depth,
+        order,
+        x,
+        y: yCursor,
+        width: column.width,
+        height,
+        display,
+        columnOffsetY: 0,
+      };
+      yCursor += height;
+    });
+    x += column.width + DEFAULT_TILED_LANE_GAP;
+  }
+
+  return baseLayouts;
+}
+
 function normalizeTiledProjection(rawProjection: unknown): TiledProjection {
   const raw = isPlainObject(rawProjection) ? rawProjection : {};
   return {
@@ -219,6 +259,7 @@ function normalizeTiledPageStates(rawPages: unknown, nodes: RhizoNode[]): Record
       scrollTop: Math.max(0, finiteNumber(rawPage.scrollTop, 0)),
       pinned: Boolean(rawPage.pinned),
     };
+
   }
   return pages;
 }

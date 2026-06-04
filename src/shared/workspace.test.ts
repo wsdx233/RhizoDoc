@@ -3,6 +3,7 @@ import type { RhizoEdge, RhizoNode, RhizoWorkspace } from './types.js';
 import { validateFlow } from './schemas.js';
 import {
   DEFAULT_TILED_COLUMN_WIDTH,
+  DEFAULT_TILED_COLUMN_HEADER_HEIGHT,
   DEFAULT_TILED_WORKSPACE_ID,
   MIN_TILED_COLUMN_WIDTH,
   createDefaultTiledWorkspace,
@@ -86,14 +87,14 @@ describe('tiled workspace projection', () => {
     expect(depthOne?.pageIds).toEqual(['b', 'a', 'c']);
   });
 
-  it('treats persisted column membership as a workspace-only layout override', () => {
+  it('keeps columns tied to graph depth while preserving order inside a depth', () => {
     const nodes = [node('node-root'), node('a'), node('b')];
     const edges = [edge('node-root', 'a'), edge('node-root', 'b')];
     const persistedWorkspace = {
       projection: { mode: 'depth', includeOrphans: true },
       columns: [
         { id: 'depth-1', depth: 1, width: 420, pageIds: ['b'] },
-        { id: 'scratch-column', depth: 2, width: 420, pageIds: ['a'] },
+        { id: 'wrong-depth', depth: 2, width: 420, pageIds: ['a'] },
       ],
     } as Pick<RhizoWorkspace, 'projection' | 'columns'>;
 
@@ -102,8 +103,7 @@ describe('tiled workspace projection', () => {
     expect(projection.depths).toEqual({ 'node-root': 0, a: 1, b: 1 });
     expect(projection.columns.map((column) => ({ depth: column.depth, pageIds: column.pageIds }))).toEqual([
       { depth: 0, pageIds: ['node-root'] },
-      { depth: 1, pageIds: ['b'] },
-      { depth: 2, pageIds: ['a'] },
+      { depth: 1, pageIds: ['b', 'a'] },
     ]);
   });
 });
@@ -170,5 +170,29 @@ describe('tiled workspace normalization', () => {
     expect(state.activeWorkspaceId).toBe('same');
     expect(state.workspaces.map((workspace) => workspace.id)).toEqual(['same', 'same-2']);
     expect(state.workspaces[0].columns[0].width).toBe(DEFAULT_TILED_COLUMN_WIDTH);
+  });
+
+  it('builds continuous tiling-stack layouts from per-depth order', () => {
+    const nodes = [node('node-root'), node('a'), node('b')];
+    const edges = [edge('node-root', 'a'), edge('node-root', 'b')];
+
+    const state = normalizeTiledWorkspaces([
+      {
+        id: 'field',
+        kind: 'tiled',
+        columns: [{ id: 'depth-1', depth: 1, width: 420, pageIds: ['b', 'a'] }],
+        pages: {
+          b: { height: 180, display: 'normal' },
+          a: { height: 120, display: 'normal' },
+        },
+      },
+    ], { nodes, edges, activeWorkspaceId: 'field' });
+
+    const workspace = state.workspaces[0];
+    expect(workspace.kind).toBe('bottomless-tiled');
+    const projection = projectTiledColumns(nodes, edges, workspace);
+    expect(projection.columns.find((column) => column.depth === 1)?.pageIds).toEqual(['b', 'a']);
+    expect(projection.pageLayouts.b).toMatchObject({ depth: 1, order: 0, y: DEFAULT_TILED_COLUMN_HEADER_HEIGHT, height: 180 });
+    expect(projection.pageLayouts.a).toMatchObject({ depth: 1, order: 1, y: DEFAULT_TILED_COLUMN_HEADER_HEIGHT + 180, height: 120 });
   });
 });
