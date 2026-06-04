@@ -28,6 +28,7 @@ type TiledWorkspaceControllerOptions = {
 
 export function createTiledWorkspaceController(options: TiledWorkspaceControllerOptions) {
   const { root, state, getNode, setActiveView, focusCanvasNode, openFullscreen, isEditableTarget } = options;
+  const tailStateByNodeId = new Map();
 
   function ensureWorkspace() {
     let workspace = state.workspaces.find((item) => item.id === state.activeWorkspaceId) || state.workspaces[0];
@@ -111,11 +112,13 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
 
   function unmountStreamdownContent(nodeId = '') {
     const selector = nodeId
-      ? `[data-node-id="${cssAttr(nodeId)}"] .tiled-content`
-      : '.tiled-content';
+      ? `[data-node-id="${cssAttr(nodeId)}"] .tiled-markdown-host`
+      : '.tiled-markdown-host';
     root.querySelectorAll(selector).forEach((contentEl) => {
       unmountStreamdownMarkdown(contentEl as HTMLElement);
     });
+    if (nodeId) disconnectTailState(nodeId);
+    else tailStateByNodeId.forEach((_, id) => disconnectTailState(id));
   }
 
   function getContextualLayouts(projection, workspace) {
@@ -202,13 +205,20 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     if (display !== 'title') {
       const content = document.createElement('div');
       content.className = 'tiled-content markdown-body';
-      content.innerHTML = renderMarkdown(node.content || '');
-      postProcessNodeContent(content);
+      const host = document.createElement('div');
+      host.className = 'tiled-markdown-host';
+      host.innerHTML = renderMarkdown(node.content || '');
+      postProcessNodeContent(host);
       state.annotations
         .filter((annotation) => annotation.sourceNodeId === node.id)
-        .forEach((annotation) => applyAnnotationToContainer(content, annotation));
+        .forEach((annotation) => applyAnnotationToContainer(host, annotation));
+      const sentinel = document.createElement('div');
+      sentinel.className = 'tiled-bottom-sentinel';
+      sentinel.setAttribute('aria-hidden', 'true');
+      content.append(host, sentinel);
       content.scrollTop = Math.max(0, Number(pageState?.scrollTop) || 0);
       section.appendChild(content);
+      attachScrollIntent(node.id, content);
     }
 
     return section;
@@ -234,27 +244,106 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
   async function renderStreamdownContent(nodeId, markdown, options: any = {}) {
     if (state.activeView !== 'tiled') return false;
     const contentEl = root.querySelector(`[data-node-id="${cssAttr(nodeId)}"] .tiled-content`) as HTMLElement | null;
-    if (!contentEl) {
+    const hostEl = contentEl?.querySelector('.tiled-markdown-host') as HTMLElement | null;
+    if (!contentEl || !hostEl) {
       updateNodeShell(nodeId);
       return false;
     }
     const pageState = ensurePageState(nodeId);
-    const previousScrollTop = contentEl.scrollTop;
-    await renderStreamdownMarkdown(contentEl, markdown || '', { streaming: options.streaming !== false });
-    restoreContentScroll(contentEl, pageState, previousScrollTop);
+    const scrollState = captureContentScrollState(contentEl, nodeId);
+    await renderStreamdownMarkdown(hostEl, markdown || '', { streaming: options.streaming !== false });
+    restoreContentScroll(contentEl, pageState, scrollState);
+    attachScrollIntent(nodeId, contentEl);
     updateNodeShell(nodeId);
     requestAnimationFrame(drawRelations);
     return true;
   }
 
-  function restoreContentScroll(contentEl, pageState, scrollTop) {
+  function captureContentScrollState(contentEl, nodeId) {
+    const tailState = ensureTailState(nodeId, contentEl);
+    return {
+      nodeId,
+      scrollTop: contentEl.scrollTop,
+      followTail: tailState.followTail,
+    };
+  }
+
+  function restoreContentScroll(contentEl, pageState, scrollState) {
     const restore = () => {
-      contentEl.scrollTop = scrollTop;
+      if (scrollState.followTail) {
+        scrollToContentBottom(contentEl);
+      } else {
+        contentEl.scrollTop = scrollState.scrollTop;
+      }
       pageState.scrollTop = contentEl.scrollTop;
+      updateTailState(scrollState.nodeId, contentEl);
     };
     restore();
     queueMicrotask(restore);
     requestAnimationFrame(restore);
+  }
+
+  function attachScrollIntent(nodeId, contentEl) {
+    const tailState = ensureTailState(nodeId, contentEl);
+    if (tailState.contentEl === contentEl && tailState.attached) return tailState;
+
+    tailState.intersectionObserver?.disconnect();
+    tailState.resizeObserver?.disconnect();
+    tailState.contentEl = contentEl;
+    tailState.attached = true;
+    tailState.followTail = isNearContentBottom(contentEl);
+
+    const sentinel = contentEl.querySelector('.tiled-bottom-sentinel');
+    if (sentinel && 'IntersectionObserver' in window) {
+      tailState.intersectionObserver = new IntersectionObserver((entries) => {
+        tailState.followTail = entries.some((entry) => entry.isIntersecting) || isNearContentBottom(contentEl);
+      }, { root: contentEl, threshold: 1 });
+      tailState.intersectionObserver.observe(sentinel);
+    }
+
+    if ('ResizeObserver' in window) {
+      tailState.resizeObserver = new ResizeObserver(() => {
+        if (!tailState.followTail) return;
+        scrollToContentBottom(contentEl);
+        ensurePageState(nodeId).scrollTop = contentEl.scrollTop;
+      });
+      const host = contentEl.querySelector('.tiled-markdown-host') || contentEl;
+      tailState.resizeObserver.observe(host);
+      tailState.resizeObserver.observe(contentEl);
+    }
+    return tailState;
+  }
+
+  function disconnectTailState(nodeId) {
+    const tailState = tailStateByNodeId.get(nodeId);
+    if (!tailState) return;
+    tailState.intersectionObserver?.disconnect();
+    tailState.resizeObserver?.disconnect();
+    tailState.attached = false;
+    tailState.contentEl = null;
+  }
+
+  function ensureTailState(nodeId, contentEl = null) {
+    let tailState = tailStateByNodeId.get(nodeId);
+    if (!tailState) {
+      tailState = { followTail: contentEl ? isNearContentBottom(contentEl) : true };
+      tailStateByNodeId.set(nodeId, tailState);
+    }
+    return tailState;
+  }
+
+  function updateTailState(nodeId, contentEl) {
+    const tailState = ensureTailState(nodeId, contentEl);
+    tailState.followTail = isNearContentBottom(contentEl);
+    return tailState;
+  }
+
+  function isNearContentBottom(contentEl) {
+    return contentEl.scrollHeight - contentEl.clientHeight - contentEl.scrollTop <= 32;
+  }
+
+  function scrollToContentBottom(contentEl) {
+    contentEl.scrollTop = Math.max(0, contentEl.scrollHeight - contentEl.clientHeight);
   }
 
   function handleClick(event) {
@@ -489,6 +578,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     const content = (event.target as Element).closest?.('.tiled-content') as HTMLElement | null;
     const nodeId = content?.closest('.tiled-section')?.getAttribute('data-node-id');
     if (!content || !nodeId) return;
+    updateTailState(nodeId, content);
     const pageState = ensurePageState(nodeId);
     pageState.scrollTop = content.scrollTop;
     requestAnimationFrame(drawRelations);
