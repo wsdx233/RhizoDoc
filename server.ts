@@ -10,6 +10,7 @@ import { normalizeGeneratedNode } from './src/shared/generated-node.js';
 import { normalizeFlowName as normalizeSafeFlowName, validateFlow, validateLLMPayload } from './src/shared/schemas.js';
 import { buildInstructions, buildLLMInput } from './src/server/llm-prompt.js';
 import { resolvePathInsideRoot } from './src/server/paths.js';
+import { createPiSearchAgentCompletion, createPiSearchAgentStream, isPiSearchAgentEnabled } from './src/server/rhizo-agent.js';
 import type { LLMGeneratePayload, RhizoDocConfig } from './src/shared/types.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -119,16 +120,22 @@ app.post('/api/llm/stream', async (req, res) => {
         writeSse(res, 'delta', { delta: event.delta });
       } else if (event.type === 'thinking_delta') {
         writeSse(res, 'thinking_delta', { delta: event.delta });
+      } else if (event.type === 'tool_call') {
+        writeSse(res, 'tool_call', { id: event.id, name: event.name, args: event.args });
+      } else if (event.type === 'tool_update') {
+        writeSse(res, 'tool_update', { id: event.id, name: event.name, summary: event.summary });
+      } else if (event.type === 'tool_result') {
+        writeSse(res, 'tool_result', { id: event.id, name: event.name, ok: event.ok, summary: event.summary });
       } else if (event.type === 'done') {
-        const outputText = extractPiText(event.message);
+        const outputText = event.outputText || extractPiText(event.message);
         const generated = normalizeGeneratedNode(outputText, payload);
         writeSse(res, 'done', {
           title: generated.title,
           content: generated.content,
           raw: outputText,
-          usage: event.message.usage || null,
-          model: `${stream.provider}/${event.message.responseModel || event.message.model || stream.modelId}`,
-          apiType: event.message.api || stream.apiType,
+          usage: event.message?.usage || null,
+          model: event.message ? `${stream.provider}/${event.message.responseModel || event.message.model || stream.modelId}` : stream.model,
+          apiType: event.message?.api || stream.apiType,
           reasoningEffort: stream.reasoningEffort,
         });
       } else if (event.type === 'error') {
@@ -270,15 +277,68 @@ function normalizeLLMPayload(raw: unknown): LLMGeneratePayload {
 }
 
 async function requestLLMNode(payload: LLMGeneratePayload) {
-  const instructions = buildInstructions();
+  const instructions = buildInstructions({ searchToolsEnabled: isPiSearchAgentEnabled(appConfig) });
   const input = buildLLMInput(payload);
-  return createPiNode({ instructions, input });
+  return isPiSearchAgentEnabled(appConfig)
+    ? createPiSearchNode({ instructions, input })
+    : createPiNode({ instructions, input });
 }
 
 async function requestLLMNodeStream(payload: LLMGeneratePayload, { signal }: { signal?: AbortSignal } = {}) {
-  const instructions = buildInstructions();
+  const instructions = buildInstructions({ searchToolsEnabled: isPiSearchAgentEnabled(appConfig) });
   const input = buildLLMInput(payload);
-  return createPiNodeStream({ instructions, input, signal });
+  return isPiSearchAgentEnabled(appConfig)
+    ? createPiSearchNodeStream({ instructions, input, signal })
+    : createPiNodeStream({ instructions, input, signal });
+}
+
+async function createPiSearchNode({ instructions, input }: { instructions: string; input: string }) {
+  const config = await getPiModelConfig();
+  if (!config.ready) {
+    const error = new Error(config.error || 'Pi 模型未配置或缺少凭据。请使用 pi /model 或 pi-ai login 配置模型。') as Error & Record<string, unknown>;
+    error.status = 400;
+    error.provider = config.provider;
+    error.model = config.modelId;
+    error.apiType = 'pi';
+    error.reasoningEffort = config.thinkingLevel || 'off';
+    throw error;
+  }
+
+  return createPiSearchAgentCompletion({
+    appConfig,
+    agentDir: AGENT_DIR,
+    authStorage,
+    modelRegistry,
+    settingsManager,
+    modelConfig: { model: config.model, thinkingLevel: config.thinkingLevel || 'off' },
+    instructions,
+    input,
+  });
+}
+
+async function createPiSearchNodeStream({ instructions, input, signal }: { instructions: string; input: string; signal?: AbortSignal }) {
+  const config = await getPiModelConfig();
+  if (!config.ready) {
+    const error = new Error(config.error || 'Pi 模型未配置或缺少凭据。请使用 pi /model 或 pi-ai login 配置模型。') as Error & Record<string, unknown>;
+    error.status = 400;
+    error.provider = config.provider;
+    error.model = config.modelId;
+    error.apiType = 'pi';
+    error.reasoningEffort = config.thinkingLevel || 'off';
+    throw error;
+  }
+
+  return createPiSearchAgentStream({
+    appConfig,
+    agentDir: AGENT_DIR,
+    authStorage,
+    modelRegistry,
+    settingsManager,
+    modelConfig: { model: config.model, thinkingLevel: config.thinkingLevel || 'off' },
+    instructions,
+    input,
+    signal,
+  });
 }
 
 async function createPiNode({ instructions, input }: { instructions: string; input: string }) {

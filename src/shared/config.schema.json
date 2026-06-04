@@ -29,6 +29,30 @@
       "properties": {
         "flowsDir": { "type": "string", "default": "data/flows" }
       }
+    },
+    "tools": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "search": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "extensionPaths": {
+              "type": "array",
+              "items": { "type": "string" },
+              "default": []
+            },
+            "allowedTools": {
+              "type": "array",
+              "items": { "type": "string" },
+              "default": ["grok_search", "kimi_search", "gemini_search"]
+            },
+            "maxToolCalls": { "type": "integer", "minimum": 0, "maximum": 64, "default": 8 }
+          }
+        }
+      }
     }
   }
 }

@@ -14,6 +14,14 @@ export type RhizoDocConfig = {
   storage: {
     flowsDir: string;
   };
+  tools: {
+    search: {
+      enabled: boolean;
+      extensionPaths: string[];
+      allowedTools: string[];
+      maxToolCalls: number;
+    };
+  };
 };
 
 export type ApiConfigResponse = {
@@ -196,6 +204,28 @@ export type LLMStreamDeltaEvent = {
   delta: string;
 };
 
+export type LLMStreamToolCallEvent = {
+  type: 'tool_call';
+  id: string;
+  name: string;
+  args?: unknown;
+};
+
+export type LLMStreamToolUpdateEvent = {
+  type: 'tool_update';
+  id: string;
+  name: string;
+  summary: string;
+};
+
+export type LLMStreamToolResultEvent = {
+  type: 'tool_result';
+  id: string;
+  name: string;
+  ok: boolean;
+  summary: string;
+};
+
 export type LLMStreamDoneEvent = {
   type: 'done';
   title: string;
@@ -217,7 +247,14 @@ export type LLMStreamErrorEvent = {
   reasoningEffort?: string;
 };
 
-export type LLMStreamEvent = LLMStreamReadyEvent | LLMStreamDeltaEvent | LLMStreamDoneEvent | LLMStreamErrorEvent;
+export type LLMStreamEvent =
+  | LLMStreamReadyEvent
+  | LLMStreamDeltaEvent
+  | LLMStreamToolCallEvent
+  | LLMStreamToolUpdateEvent
+  | LLMStreamToolResultEvent
+  | LLMStreamDoneEvent
+  | LLMStreamErrorEvent;
 
 export type FlowSummary = {
   name: string;

@@ -104,6 +104,14 @@ RhizoDoc uses `rhizodoc.config.json` for app-specific settings. The file is inte
   },
   "storage": {
     "flowsDir": "data/flows"
+  },
+  "tools": {
+    "search": {
+      "enabled": false,
+      "extensionPaths": [],
+      "allowedTools": ["grok_search", "kimi_search", "gemini_search"],
+      "maxToolCalls": 8
+    }
   }
 }
 ```
@@ -118,6 +126,12 @@ RhizoDoc uses `rhizodoc.config.json` for app-specific settings. The file is inte
 | `pi.thinkingLevel` | Pi default thinking level or `off` | Thinking/reasoning level passed to compatible models. |
 | `pi.maxTokens` | `12000` | Max output tokens requested from the model, capped by model settings. |
 | `storage.flowsDir` | `data/flows` | Directory for server-saved flow JSON files. Relative paths resolve from the project root. |
+| `tools.search.enabled` | `false` | Enable Pi SDK tool-calling for LLM generation with read-only web search tools. When enabled, RhizoDoc loads the configured Pi search extensions and only allows the listed tools. |
+| `tools.search.extensionPaths` | `[]` | Optional explicit extension entry files. When empty, RhizoDoc uses Pi's normal extension discovery and keeps only extensions that provide one of the allowed search tools. |
+| `tools.search.allowedTools` | `grok_search`, `kimi_search`, `gemini_search` | Tool allowlist passed to the embedded Pi agent. Built-in coding tools such as `bash`, `read`, `edit`, and `write` are not enabled. |
+| `tools.search.maxToolCalls` | `8` | Per-generation cap for search tool calls. |
+
+Search-tool mode reuses existing Pi extensions rather than implementing RhizoDoc-specific providers. Configure those extensions in Pi first (for example Grok/Kimi credentials in Pi auth, or Gemini Web cookies for `gemini_search`). If you leave `extensionPaths` empty, install or expose the relevant Pi extensions through normal Pi discovery; RhizoDoc will filter the discovered extensions by `allowedTools`. Tool progress is streamed to the generation progress card; final node content remains normal RhizoDoc Markdown.
 
 CLI options use Node's built-in `node:util.parseArgs`:
 

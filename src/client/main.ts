@@ -423,6 +423,7 @@ async function generateInitialDocument() {
         }
         return;
       }
+      if (handleLLMToolEvent(event, progressId)) return;
       if (event.type === 'done') {
         finalData = event;
         return;
@@ -499,6 +500,40 @@ function setInitialGenerateLoading(isLoading) {
   DOM.initialGenerateButton.innerHTML = isLoading
     ? '<span class="material-symbols-outlined">hourglass_top</span>生成中...'
     : '<span class="material-symbols-outlined">auto_awesome</span>生成文档';
+}
+
+function handleLLMToolEvent(event: LLMStreamEvent, progressId: string) {
+  if (event.type === 'tool_call') {
+    updateProgressCard(progressId, { stage: `调用工具：${event.name}`, summary: summarizeToolArgs(event.args) });
+    return true;
+  }
+  if (event.type === 'tool_update') {
+    updateProgressCard(progressId, { stage: `工具运行中：${event.name}`, summary: event.summary || '正在获取外部信息' });
+    return true;
+  }
+  if (event.type === 'tool_result') {
+    updateProgressCard(progressId, {
+      stage: event.ok ? `工具完成：${event.name}` : `工具失败：${event.name}`,
+      summary: event.summary || (event.ok ? '已获取工具结果' : '工具调用失败'),
+    });
+    return true;
+  }
+  return false;
+}
+
+function summarizeToolArgs(args: unknown) {
+  if (!args) return '准备获取外部信息';
+  if (typeof args === 'string') return plainExcerpt(args, 160);
+  if (typeof args === 'object') {
+    const record = args as Record<string, unknown>;
+    const query = record.query || record.text_query || record.url || record.input;
+    if (query) return plainExcerpt(String(query), 180);
+  }
+  try {
+    return plainExcerpt(JSON.stringify(args), 180);
+  } catch {
+    return '准备获取外部信息';
+  }
 }
 
 function createDocument(title, content, { force = false } = {}) {
@@ -1698,6 +1733,7 @@ async function callLLMAndUpdate(nodeId, payload, { progressId = null } = {}) {
         }
         return;
       }
+      if (handleLLMToolEvent(event, progressId)) return;
       if (event.type === 'done') {
         finalData = event;
         return;

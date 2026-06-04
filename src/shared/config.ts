@@ -16,6 +16,14 @@ const defaultRhizoDocConfig: RhizoDocConfig = {
   storage: {
     flowsDir: 'data/flows',
   },
+  tools: {
+    search: {
+      enabled: false,
+      extensionPaths: [],
+      allowedTools: ['grok_search', 'kimi_search', 'gemini_search'],
+      maxToolCalls: 8,
+    },
+  },
 };
 
 export const rhizoDocConfigSchema = z
@@ -40,6 +48,18 @@ export const rhizoDocConfigSchema = z
         flowsDir: z.string().min(1).default(defaultRhizoDocConfig.storage.flowsDir),
       })
       .default(defaultRhizoDocConfig.storage),
+    tools: z
+      .object({
+        search: z
+          .object({
+            enabled: z.boolean().default(defaultRhizoDocConfig.tools.search.enabled),
+            extensionPaths: z.array(z.string().min(1)).default(defaultRhizoDocConfig.tools.search.extensionPaths),
+            allowedTools: z.array(z.string().min(1)).default(defaultRhizoDocConfig.tools.search.allowedTools),
+            maxToolCalls: z.coerce.number().int().min(0).max(64).default(defaultRhizoDocConfig.tools.search.maxToolCalls),
+          })
+          .default(defaultRhizoDocConfig.tools.search),
+      })
+      .default(defaultRhizoDocConfig.tools),
   })
   .default(defaultRhizoDocConfig);
 

@@ -13,5 +13,13 @@
   },
   "storage": {
     "flowsDir": "data/flows"
+  },
+  "tools": {
+    "search": {
+      "enabled": false,
+      "extensionPaths": [],
+      "allowedTools": ["grok_search", "kimi_search", "gemini_search"],
+      "maxToolCalls": 8
+    }
   }
 }

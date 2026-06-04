@@ -1,6 +1,6 @@
 import type { LLMGeneratePayload } from '../shared/types.js';
 
-export function buildInstructions() {
+export function buildInstructions({ searchToolsEnabled = false } = {}) {
   return [
     '你是一个严谨的中文知识图谱/文档研究助手。',
     '你的任务是为无限画布 DAG 生成一个新的节点（也可以是第一张根文档节点）。',
@@ -11,7 +11,16 @@ export function buildInstructions() {
     '从第二行开始是节点 Markdown 正文；服务端会按第一个换行把第一行拆为 title，其余内容拆为 content。',
     '正文必须是高质量 Markdown，可使用二级/三级标题、要点列表、引用、表格、代码块和 LaTeX 公式。',
     '公式只能使用双美元分隔符：行内公式写成 $$E = mc^2$$；块级公式使用独占行的 $$ 作为起止分隔符，公式内容放在中间。不要使用单个 $...$，也不要使用 \\(...\\) 或 \\[...\\]。',
-  ].join('\n');
+    searchToolsEnabled ? [
+      '',
+      '【联网检索工具】',
+      '你可以使用 grok_search、kimi_search、gemini_search 获取当前网页信息、技术文档、API 变化、来源支持的事实或读取 URL。',
+      '当用户问题涉及当前信息、近期版本、新闻、价格、政策、技术文档/API 变化，或你不确定事实是否过期时，优先使用联网检索工具。',
+      'grok_search 适合快速搜索当前网页信息并返回综合回答和来源链接；kimi_search 适合技术文档和较深入的页面抓取；gemini_search 适合 Gemini Web 搜索、读取指定 URL、获取带来源的回答。',
+      '如果需要使用工具，先调用工具，不要把工具调用过程写进节点正文；工具完成后再输出最终节点文本。',
+      '使用工具结果时不要编造来源；最终 Markdown 中应保留来源链接，引用应贴近对应段落。',
+    ].join('\n') : '',
+  ].filter(Boolean).join('\n');
 }
 
 export function buildLLMInput(payload: LLMGeneratePayload) {
