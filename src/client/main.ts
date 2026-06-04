@@ -11,6 +11,7 @@ import { clamp, closestElement, codeFenceText, cssAttr, escapeHtml, formatBytes,
 import { normalizeGeneratedNode } from '../shared/generated-node.js';
 import { isFlowObject as isValidFlowShape, validateFlow } from '../shared/schemas.js';
 import type { ApiConfigResponse, FlowListResponse, LLMStreamDoneEvent, LLMStreamEvent, SaveFlowResponse } from '../shared/types.js';
+import { createDefaultTiledWorkspace, projectTiledColumns } from '../shared/workspace.js';
 
 
 const NODE_WIDTH = 340;
@@ -68,6 +69,7 @@ const state: any = {
   flowName: '未命名流程图',
   workspaces: [],
   activeWorkspaceId: null,
+  activeView: 'canvas',
   appConfig: null,
   minimapBounds: null,
 };
@@ -123,11 +125,14 @@ function bindEvents() {
   byId('btn-server-load').addEventListener('click', openServerFlowsModal);
   byId('btn-flows-close').addEventListener('click', closeServerFlowsModal);
   byId('btn-refresh-flows').addEventListener('click', refreshServerFlows);
+  DOM.viewCanvasButton.addEventListener('click', () => setActiveView('canvas'));
+  DOM.viewTiledButton.addEventListener('click', () => setActiveView('tiled'));
 
   DOM.viewport.addEventListener('mousedown', onViewportMouseDown);
   DOM.viewport.addEventListener('auxclick', onViewportAuxClick);
   DOM.nodesLayer.addEventListener('mousedown', onNodesLayerMouseDown);
   DOM.nodesLayer.addEventListener('click', onNodesLayerClick);
+  DOM.tiledWorkspace.addEventListener('click', onTiledWorkspaceClick);
   window.addEventListener('mousemove', onWindowMouseMove);
   window.addEventListener('mouseup', onWindowMouseUp);
   document.addEventListener('mouseup', (event) => {
@@ -157,11 +162,11 @@ function bindEvents() {
     state.isNativeTextSelecting = event.button === 0
       && !state.isMoveMode
       && !state.isMultiSelectMode
-      && Boolean(target.closest('.node-content, .fs-content'));
-    if (!target.closest('#action-tooltip') && target.closest('.node-content, .fs-content')) {
+      && Boolean(target.closest('.node-content, .fs-content, .tiled-content'));
+    if (!target.closest('#action-tooltip') && target.closest('.node-content, .fs-content, .tiled-content')) {
       hideTooltip({ preserveNativeSelection: state.isNativeTextSelecting });
     }
-    if (!target.closest('#action-tooltip') && !target.closest('.node') && !target.closest('.fullscreen-container')) hideTooltip();
+    if (!target.closest('#action-tooltip') && !target.closest('.node') && !target.closest('.fullscreen-container') && !target.closest('#tiled-workspace')) hideTooltip();
     if (!target.closest('.context-menu')) hideMenus();
   });
 
@@ -533,6 +538,124 @@ function renderAll() {
   drawEdges();
   updateMinimap();
   updateFlowName();
+  if (state.activeView === 'tiled') renderTiledWorkspace();
+}
+
+function setActiveView(view) {
+  state.activeView = view === 'tiled' ? 'tiled' : 'canvas';
+  const isTiled = state.activeView === 'tiled';
+  DOM.viewport.classList.toggle('hidden', isTiled);
+  DOM.tiledWorkspace.classList.toggle('hidden', !isTiled);
+  DOM.viewCanvasButton.className = isTiled ? 'md-btn ghost' : 'md-btn filled tonal';
+  DOM.viewTiledButton.className = isTiled ? 'md-btn filled tonal' : 'md-btn ghost';
+  DOM.viewCanvasButton.setAttribute('aria-pressed', String(!isTiled));
+  DOM.viewTiledButton.setAttribute('aria-pressed', String(isTiled));
+  document.body.classList.toggle('tiled-view', isTiled);
+  hideTooltip();
+  hideMenus();
+  if (isTiled) renderTiledWorkspace();
+  else {
+    drawEdges();
+    updateMinimap();
+  }
+}
+
+function ensureTiledWorkspace() {
+  let workspace = state.workspaces.find((item) => item.id === state.activeWorkspaceId) || state.workspaces[0];
+  if (!workspace) {
+    workspace = createDefaultTiledWorkspace(state.nodes, state.edges);
+    state.workspaces = [workspace];
+    state.activeWorkspaceId = workspace.id;
+  }
+  return workspace;
+}
+
+function renderTiledWorkspace() {
+  if (state.nodes.length === 0) {
+    DOM.tiledWorkspace.innerHTML = '<div class="tiled-empty">还没有文档节点。创建或加载流程图后即可使用平铺视图。</div>';
+    return;
+  }
+
+  const workspace = ensureTiledWorkspace();
+  const projection = projectTiledColumns(state.nodes, state.edges, workspace);
+  workspace.columns = projection.columns;
+  DOM.tiledWorkspace.innerHTML = '';
+
+  if (projection.columns.length === 0) {
+    DOM.tiledWorkspace.innerHTML = '<div class="tiled-empty">当前 workspace 没有可显示的节点。</div>';
+    return;
+  }
+
+  for (const column of projection.columns) {
+    const columnEl = document.createElement('section');
+    columnEl.className = 'tiled-column';
+    columnEl.dataset.columnId = column.id;
+    columnEl.dataset.depth = String(column.depth);
+    columnEl.style.setProperty('--tiled-column-width', `${column.width}px`);
+    columnEl.innerHTML = `
+      <header class="tiled-column-header">
+        <span>Depth ${column.depth}</span>
+        <span>${column.pageIds.length} pages</span>
+      </header>
+    `;
+
+    for (const nodeId of column.pageIds) {
+      const node = getNode(nodeId);
+      if (!node) continue;
+      columnEl.appendChild(renderTiledSection(node, workspace.pages[node.id]));
+    }
+    DOM.tiledWorkspace.appendChild(columnEl);
+  }
+}
+
+function renderTiledSection(node, pageState = null) {
+  const display = pageState?.display || 'normal';
+  const section = document.createElement('article');
+  section.className = `tiled-section${display === 'title' ? ' title-only' : ''}`;
+  section.dataset.nodeId = node.id;
+  section.style.setProperty('--node-color', node.colorIndex >= 0
+    ? `var(--hl-${node.colorIndex % 5}-bg)`
+    : 'var(--md-sys-color-surface-container-high)');
+  section.style.setProperty('--tiled-section-height', `${Number(pageState?.height) || 360}px`);
+
+  const header = document.createElement('header');
+  header.className = 'tiled-section-header';
+  header.innerHTML = `
+    <span class="tiled-section-title"></span>
+    <span class="tiled-section-meta"></span>
+  `;
+  header.querySelector('.tiled-section-title').textContent = node.title || '未命名节点';
+  header.querySelector('.tiled-section-meta').textContent = `${(node.content || '').length} 字`;
+  section.appendChild(header);
+
+  if (display !== 'title') {
+    const content = document.createElement('div');
+    content.className = 'tiled-content markdown-body';
+    content.innerHTML = renderMarkdown(node.content || '');
+    postProcessNodeContent(content);
+    state.annotations
+      .filter((annotation) => annotation.sourceNodeId === node.id)
+      .forEach((annotation) => applyAnnotationToContainer(content, annotation));
+    content.scrollTop = Math.max(0, Number(pageState?.scrollTop) || 0);
+    section.appendChild(content);
+  }
+
+  return section;
+}
+
+function onTiledWorkspaceClick(event) {
+  const annotated = (event.target as Element).closest('mark.annotated, .math-node.annotated-math') as HTMLElement | null;
+  const targetId = annotated?.dataset.refId;
+  if (targetId) {
+    setActiveView('canvas');
+    focusNode(targetId);
+    return;
+  }
+
+  const header = (event.target as Element).closest('.tiled-section-header') as HTMLElement | null;
+  const section = header?.closest('.tiled-section') as HTMLElement | null;
+  const nodeId = section?.dataset.nodeId;
+  if (nodeId) openFullscreen(nodeId);
 }
 
 function normalizeNode(raw) {
@@ -632,6 +755,7 @@ function updateNodeElement(id, { contentHtml = null, preserveContent = false } =
     if (state.fullscreenNodeId === node.id && !preserveContent) syncFullscreenContent(node.id, { contentHtml });
     drawEdges();
     updateMinimap();
+    if (state.activeView === 'tiled') renderTiledWorkspace();
   });
 }
 
@@ -672,10 +796,12 @@ function shouldPreserveNodeContentForSelection(nodeId) {
   const selection = window.getSelection();
   if (!selection || selection.rangeCount === 0 || !selection.toString().trim()) return false;
   const range = selection.getRangeAt(0);
-  const contentEl = closestElement<HTMLElement>(range.commonAncestorContainer, '.node-content, .fs-content');
+  const contentEl = closestElement<HTMLElement>(range.commonAncestorContainer, '.node-content, .fs-content, .tiled-content');
   if (!contentEl) return false;
   const fullscreenSourceId = contentEl.classList.contains('fs-content') ? contentEl.dataset.sourceId : '';
-  const selectedNodeId = fullscreenSourceId || contentEl.closest('.node')?.id || '';
+  const tiledSection = contentEl.classList.contains('tiled-content') ? contentEl.closest('.tiled-section') as HTMLElement | null : null;
+  const tiledSourceId = tiledSection?.dataset.nodeId || '';
+  const selectedNodeId = fullscreenSourceId || tiledSourceId || contentEl.closest('.node')?.id || '';
   return selectedNodeId === nodeId;
 }
 
@@ -1196,12 +1322,14 @@ function handleSelection() {
   }
 
   const range = selection.getRangeAt(0);
-  const contentEl = closestElement<HTMLElement>(range.commonAncestorContainer, '.node-content, .fs-content');
+  const contentEl = closestElement<HTMLElement>(range.commonAncestorContainer, '.node-content, .fs-content, .tiled-content');
   if (!contentEl) return;
 
   const fsSourceId = contentEl.classList.contains('fs-content') ? contentEl.dataset.sourceId : '';
+  const tiledSection = contentEl.classList.contains('tiled-content') ? contentEl.closest('.tiled-section') as HTMLElement | null : null;
+  const tiledSourceId = tiledSection?.dataset.nodeId || '';
   const nodeEl = contentEl.closest('.node');
-  const parentNodeId = fsSourceId || nodeEl?.id;
+  const parentNodeId = fsSourceId || tiledSourceId || nodeEl?.id;
   if (!parentNodeId || !getNode(parentNodeId)) return;
 
   const logicalSelection = getLogicalRangeSelection(contentEl, range, rawText);
@@ -1212,7 +1340,7 @@ function handleSelection() {
     parentNodeId,
     start: logicalSelection.start,
     length: logicalSelection.length,
-    source: fsSourceId ? 'fullscreen' : 'node',
+    source: fsSourceId ? 'fullscreen' : (tiledSourceId ? 'tiled' : 'node'),
   };
 
   if (state.isNativeTextSelecting) return;
@@ -1247,7 +1375,9 @@ function retainTemporarySelection() {
 
   const container = selection.source === 'fullscreen' && state.fullscreenNodeId === selection.parentNodeId
     ? DOM.fsContent
-    : document.getElementById(selection.parentNodeId)?.querySelector('.node-content');
+    : selection.source === 'tiled'
+      ? DOM.tiledWorkspace.querySelector(`[data-node-id="${cssAttr(selection.parentNodeId)}"] .tiled-content`)
+      : document.getElementById(selection.parentNodeId)?.querySelector('.node-content');
   if (!container) return;
   wrapTemporarySelectionByOffset(container, Number(selection.start), Number(selection.length));
 }
@@ -1452,6 +1582,7 @@ function triggerSelectionLLM() {
   state.annotations.push(annotation);
   applyAnnotation(annotation);
   if (state.fullscreenNodeId === parent.id) syncFullscreenContent(parent.id);
+  if (state.activeView === 'tiled') renderTiledWorkspace();
 
   hideTooltip();
   window.getSelection()?.removeAllRanges();

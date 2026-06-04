@@ -31,6 +31,10 @@
       <button id="btn-load-flow" class="md-btn filled tonal"><span class="material-symbols-outlined">upload_file</span>加载流程图</button>
       <button id="btn-server-save" class="md-btn ghost"><span class="material-symbols-outlined">cloud_upload</span>存到服务端</button>
       <button id="btn-server-load" class="md-btn ghost"><span class="material-symbols-outlined">cloud_download</span>服务端加载</button>
+      <span class="view-switch" role="group" aria-label="视图切换">
+        <button id="btn-view-canvas" class="md-btn filled tonal" aria-pressed="true"><span class="material-symbols-outlined">conversion_path</span>画布</button>
+        <button id="btn-view-tiled" class="md-btn ghost" aria-pressed="false"><span class="material-symbols-outlined">view_column</span>平铺</button>
+      </span>
     </nav>
   </header>
 
@@ -89,6 +93,8 @@
       <div id="nodes-layer"></div>
     </div>
   </main>
+
+  <main id="tiled-workspace" class="hidden" aria-label="平铺视图"></main>
 
   <aside id="toolbar">
     <div id="minimap"><div id="minimap-content"></div><div id="minimap-viewport"></div></div>

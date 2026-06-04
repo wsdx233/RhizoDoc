@@ -3,6 +3,7 @@ export type RhizoDomRefs = {
   canvas: HTMLElement;
   nodesLayer: HTMLElement;
   edgesLayer: SVGSVGElement;
+  tiledWorkspace: HTMLElement;
   topbar: HTMLElement;
   flowName: HTMLElement;
   apiStatus: HTMLElement;
@@ -20,6 +21,8 @@ export type RhizoDomRefs = {
   fsTitle: HTMLElement;
   fsContent: HTMLElement;
   selectionBox: HTMLElement;
+  viewCanvasButton: HTMLButtonElement;
+  viewTiledButton: HTMLButtonElement;
 
   initialFileInput: HTMLInputElement;
   docFileInput: HTMLInputElement;
@@ -45,6 +48,7 @@ export function collectDomRefs(): RhizoDomRefs {
     canvas: byId('canvas'),
     nodesLayer: byId('nodes-layer'),
     edgesLayer: byId('edges-layer'),
+    tiledWorkspace: byId('tiled-workspace'),
     topbar: byId('topbar'),
     flowName: byId('flow-name'),
     apiStatus: byId('api-status'),
@@ -62,6 +66,8 @@ export function collectDomRefs(): RhizoDomRefs {
     fsTitle: byId('fs-title'),
     fsContent: byId('fs-content'),
     selectionBox: byId('selection-box'),
+    viewCanvasButton: byId('btn-view-canvas'),
+    viewTiledButton: byId('btn-view-tiled'),
 
     initialFileInput: byId('initial-file-input'),
     docFileInput: byId('doc-file-input'),
