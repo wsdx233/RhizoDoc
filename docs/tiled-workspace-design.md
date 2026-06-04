@@ -61,6 +61,8 @@ Depth 0 stack              Depth 1 stack                 Depth 2 stack
 
 The stacks remain tiled: panel-to-panel continuity inside a column is preserved. A focus-context layout pass can offset the left and right stacks so the most relevant panels line up around the focused panel.
 
+The workspace should allow intentional over-scroll. The user should be able to scroll far enough upward or downward that all panels leave the viewport; the limit is not the first/last panel touching the viewport edge.
+
 ## Data Model
 
 The current model is close if interpreted correctly:
@@ -113,7 +115,31 @@ Important invariants:
 8. Compute contextual column offsets from current focus:
    - focused column offset = 0;
    - for each other column, choose the highest-scoring related panel in that column;
-   - offset the whole stack so that panel's center aligns near the focused panel's center.
+   - offset the whole stack by a stable formula, not an ad-hoc visual heuristic.
+
+### Column offset formula
+
+For any non-focused column `C`:
+
+```text
+offsetY(C) = focusBaseY + focusAnchor - candidateBaseY - candidateAnchor
+```
+
+Where:
+
+- `focusBaseY` comes from the current overall layout: the focused panel's y in its own depth stack before contextual offsets.
+- `candidateBaseY` comes from the current overall layout: the selected related panel's y in column `C` before contextual offsets.
+- `focusAnchor` is derived from the focused panel's current visible interval in the workspace viewport, usually the center of the visible interval clipped to the panel.
+- `candidateAnchor` is the corresponding anchor in the candidate panel, clamped to that panel's height.
+- The candidate panel is chosen from current layout + focus + relation scores.
+
+This means relative displacement between adjacent columns is a deterministic function of:
+
+```text
+current overall layout + focused panel id + focused panel visible interval position
+```
+
+The result can change while the user scrolls the workspace, but it should be recomputed by patching positions, not by rebuilding Markdown content.
 
 ## Relationship Tension
 
@@ -168,8 +194,10 @@ The current DOM implementation can remain for MVP:
 
 - render depth columns as absolute stack lanes;
 - render each panel at its computed stack y plus contextual column offset;
+- add viewport-sized vertical slack above and below the field, so over-scroll can move every panel out of view;
 - draw relation SVG paths from measured DOM anchors;
-- recalculate offsets and relation paths when focus, order, height, scroll, or annotations change.
+- recalculate offsets and relation paths when focus, order, height, workspace scroll, or annotations change;
+- when only offsets change because of workspace scroll, patch section positions instead of rebuilding Markdown DOM.
 
 A future renderer island may own the tiled workspace once interactions grow, but the pure projection/order rules should remain shared TypeScript.
 

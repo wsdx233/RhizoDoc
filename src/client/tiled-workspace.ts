@@ -14,7 +14,7 @@ import {
 } from '../shared/workspace.js';
 
 const TILED_FIELD_PADDING_X = 20;
-const TILED_FIELD_BOTTOM_PADDING = 40;
+const TILED_MIN_VERTICAL_SCROLL_SLACK = 360;
 
 type TiledWorkspaceControllerOptions = {
   root: HTMLElement;
@@ -29,6 +29,8 @@ type TiledWorkspaceControllerOptions = {
 export function createTiledWorkspaceController(options: TiledWorkspaceControllerOptions) {
   const { root, state, getNode, setActiveView, focusCanvasNode, openFullscreen, isEditableTarget } = options;
   const tailStateByNodeId = new Map();
+  let pendingLayoutRefresh = 0;
+  let isAdjustingRootScroll = false;
 
   function ensureWorkspace() {
     let workspace = state.workspaces.find((item) => item.id === state.activeWorkspaceId) || state.workspaces[0];
@@ -43,6 +45,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
   function render() {
     const previousScrollLeft = root.scrollLeft;
     const previousScrollTop = root.scrollTop;
+    const previousFieldOffsetY = getCurrentFieldOffsetY();
     unmountStreamdownContent();
 
     if (state.nodes.length === 0) {
@@ -60,11 +63,8 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     }
 
     const layouts = getContextualLayouts(projection, workspace);
-    const minY = Math.min(0, ...layouts.map((layout) => layout.y));
-    const maxY = Math.max(0, ...layouts.map((layout) => layout.y + layout.height));
-    const fieldOffsetY = Math.max(0, -minY);
-    const fieldWidth = projection.columns.reduce((x, column) => x + column.width + DEFAULT_TILED_LANE_GAP, 0) + TILED_FIELD_PADDING_X;
-    const fieldHeight = fieldOffsetY + maxY + TILED_FIELD_BOTTOM_PADDING;
+    const fieldGeometry = getFieldGeometry(projection.columns, layouts);
+    const { fieldOffsetY, fieldWidth, fieldHeight } = fieldGeometry;
 
     root.innerHTML = '';
     const fieldEl = document.createElement('div');
@@ -105,9 +105,59 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
       fieldEl.appendChild(renderSection(node, workspace.pages[node.id], workspace, layout, fieldOffsetY));
     }
 
+    isAdjustingRootScroll = true;
     root.scrollLeft = previousScrollLeft;
-    root.scrollTop = previousScrollTop;
-    requestAnimationFrame(drawRelations);
+    root.scrollTop = previousScrollTop + fieldOffsetY - previousFieldOffsetY;
+    requestAnimationFrame(() => {
+      isAdjustingRootScroll = false;
+      drawRelations();
+    });
+  }
+
+  function refreshLayoutPositions() {
+    const workspace = ensureWorkspace();
+    const fieldEl = root.querySelector('.tiled-field') as HTMLElement | null;
+    if (!fieldEl || state.nodes.length === 0) return;
+    const previousScrollLeft = root.scrollLeft;
+    const previousScrollTop = root.scrollTop;
+    const previousFieldOffsetY = getCurrentFieldOffsetY();
+    const projection = projectTiledColumns(state.nodes, state.edges, workspace);
+    workspace.columns = projection.columns;
+    const layouts = getContextualLayouts(projection, workspace);
+    const { fieldOffsetY, fieldWidth, fieldHeight } = getFieldGeometry(projection.columns, layouts);
+
+    fieldEl.style.width = `${fieldWidth}px`;
+    fieldEl.style.height = `${fieldHeight}px`;
+    fieldEl.dataset.stackOffsetY = String(fieldOffsetY);
+
+    let laneX = 0;
+    for (const column of projection.columns) {
+      const columnEl = fieldEl.querySelector(`[data-column-id="${cssAttr(column.id)}"]`) as HTMLElement | null;
+      if (columnEl) {
+        columnEl.style.left = `${laneX}px`;
+        columnEl.style.width = `${column.width}px`;
+        columnEl.style.height = `${fieldHeight}px`;
+      }
+      laneX += column.width + DEFAULT_TILED_LANE_GAP;
+    }
+
+    for (const layout of layouts) {
+      const section = fieldEl.querySelector(`[data-node-id="${cssAttr(layout.nodeId)}"]`) as HTMLElement | null;
+      if (!section) continue;
+      section.dataset.stackY = String(layout.y);
+      section.style.left = `${layout.x}px`;
+      section.style.top = `${fieldOffsetY + layout.y}px`;
+      section.style.width = `${layout.width}px`;
+      section.style.height = `${layout.height}px`;
+    }
+
+    isAdjustingRootScroll = true;
+    root.scrollLeft = previousScrollLeft;
+    root.scrollTop = previousScrollTop + fieldOffsetY - previousFieldOffsetY;
+    requestAnimationFrame(() => {
+      isAdjustingRootScroll = false;
+      drawRelations();
+    });
   }
 
   function unmountStreamdownContent(nodeId = '') {
@@ -121,13 +171,48 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     else tailStateByNodeId.forEach((_, id) => disconnectTailState(id));
   }
 
+  function getCurrentFieldOffsetY() {
+    const field = root.querySelector('.tiled-field') as HTMLElement | null;
+    return Number(field?.dataset.stackOffsetY || 0) || 0;
+  }
+
+  function getViewportVerticalSlack() {
+    return Math.max(root.clientHeight || 0, TILED_MIN_VERTICAL_SCROLL_SLACK);
+  }
+
+  function getFieldGeometry(columns, layouts) {
+    const slack = getViewportVerticalSlack();
+    const minY = Math.min(0, ...layouts.map((layout) => layout.y));
+    const maxY = Math.max(0, ...layouts.map((layout) => layout.y + layout.height));
+    const fieldOffsetY = slack + Math.max(0, -minY);
+    const fieldWidth = columns.reduce((x, column) => x + column.width + DEFAULT_TILED_LANE_GAP, 0) + TILED_FIELD_PADDING_X;
+    const fieldHeight = fieldOffsetY + maxY + slack;
+    return { fieldOffsetY, fieldWidth, fieldHeight };
+  }
+
+  function getFocusVisibleAnchor(baseFocusedLayout) {
+    const section = root.querySelector(`[data-node-id="${cssAttr(baseFocusedLayout.nodeId)}"]`) as HTMLElement | null;
+    if (!section) return baseFocusedLayout.height / 2;
+    const sectionTop = section.offsetTop;
+    const viewportTop = root.scrollTop;
+    const viewportBottom = root.scrollTop + root.clientHeight;
+    const visibleTop = Math.max(sectionTop, viewportTop);
+    const visibleBottom = Math.min(sectionTop + section.offsetHeight, viewportBottom);
+    if (visibleBottom <= visibleTop) return baseFocusedLayout.height / 2;
+    return clamp((visibleTop + visibleBottom) / 2 - sectionTop, 0, baseFocusedLayout.height);
+  }
+
+  function getCandidateAnchor(candidateLayout, focusAnchor) {
+    return clamp(focusAnchor, 0, candidateLayout.height);
+  }
+
   function getContextualLayouts(projection, workspace) {
     const baseLayouts = Object.values(projection.pageLayouts) as any[];
     const focusedId = workspace.focus?.nodeId || '';
     const focusedLayout = focusedId ? projection.pageLayouts[focusedId] : null;
     if (!focusedLayout) return baseLayouts;
 
-    const focusedCenterY = focusedLayout.y + focusedLayout.height / 2;
+    const focusAnchor = getFocusVisibleAnchor(focusedLayout);
     const offsetByColumnId = new Map();
     for (const column of projection.columns) {
       if (column.pageIds.includes(focusedId)) {
@@ -148,7 +233,8 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
         offsetByColumnId.set(column.id, 0);
         continue;
       }
-      offsetByColumnId.set(column.id, focusedCenterY - (best.layout.y + best.layout.height / 2));
+      const candidateAnchor = getCandidateAnchor(best.layout, focusAnchor);
+      offsetByColumnId.set(column.id, focusedLayout.y + focusAnchor - best.layout.y - candidateAnchor);
     }
 
     return baseLayouts.map((layout) => {
@@ -574,7 +660,20 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     }
   }
 
+  function scheduleLayoutRefresh() {
+    if (pendingLayoutRefresh) return;
+    pendingLayoutRefresh = requestAnimationFrame(() => {
+      pendingLayoutRefresh = 0;
+      if (state.activeView === 'tiled') refreshLayoutPositions();
+    });
+  }
+
   function handleScroll(event) {
+    if (event.target === root) {
+      if (!isAdjustingRootScroll) scheduleLayoutRefresh();
+      requestAnimationFrame(drawRelations);
+      return;
+    }
     const content = (event.target as Element).closest?.('.tiled-content') as HTMLElement | null;
     const nodeId = content?.closest('.tiled-section')?.getAttribute('data-node-id');
     if (!content || !nodeId) return;
