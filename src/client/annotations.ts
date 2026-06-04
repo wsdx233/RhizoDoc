@@ -53,6 +53,9 @@ function wrapTextByOffset(container: Element, start: number, length: number, ann
 
 function wrapTextNodeSegment(textNode: Text, from: number, to: number, annotation: RhizoAnnotation) {
   const value = textNode.nodeValue || '';
+  const selectedText = value.slice(from, to);
+  if (isTableStructuralWhitespace(textNode, selectedText)) return;
+
   const fragment = document.createDocumentFragment();
   if (from > 0) fragment.appendChild(document.createTextNode(value.slice(0, from)));
 
@@ -64,11 +67,16 @@ function wrapTextNodeSegment(textNode: Text, from: number, to: number, annotatio
   mark.style.backgroundColor = colors.bg;
   mark.style.color = colors.fg;
   mark.title = '点击定位到生成节点';
-  mark.textContent = value.slice(from, to);
+  mark.textContent = selectedText;
   fragment.appendChild(mark);
 
   if (to < value.length) fragment.appendChild(document.createTextNode(value.slice(to)));
   textNode.parentNode?.replaceChild(fragment, textNode);
+}
+
+function isTableStructuralWhitespace(textNode: Text, text: string) {
+  if (text.trim()) return false;
+  return Boolean(textNode.parentElement?.matches('table, thead, tbody, tfoot, tr, colgroup'));
 }
 
 function annotateMathElement(element: HTMLElement, annotation: RhizoAnnotation) {

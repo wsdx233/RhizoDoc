@@ -1261,7 +1261,7 @@ function wrapTemporarySelectionByOffset(container, start, length) {
 function wrapTemporaryTextNodeSegment(textNode, from, to) {
   const value = textNode.nodeValue || '';
   const selectedText = value.slice(from, to);
-  if (!selectedText.trim()) return;
+  if (!selectedText.trim() || isTableStructuralWhitespaceTextNode(textNode, selectedText)) return;
 
   const leading = selectedText.match(/^\s*/)?.[0] || '';
   const trailing = selectedText.match(/\s*$/)?.[0] || '';
@@ -1280,6 +1280,11 @@ function wrapTemporaryTextNodeSegment(textNode, from, to) {
   if (trailing) fragment.appendChild(document.createTextNode(trailing));
   if (to < value.length) fragment.appendChild(document.createTextNode(value.slice(to)));
   textNode.parentNode?.replaceChild(fragment, textNode);
+}
+
+function isTableStructuralWhitespaceTextNode(textNode, text) {
+  if (String(text || '').trim()) return false;
+  return Boolean(textNode.parentElement?.matches?.('table, thead, tbody, tfoot, tr, colgroup'));
 }
 
 function clearTemporarySelection() {
