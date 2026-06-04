@@ -11,7 +11,15 @@ import { clamp, closestElement, codeFenceText, cssAttr, escapeHtml, formatBytes,
 import { normalizeGeneratedNode } from '../shared/generated-node.js';
 import { isFlowObject as isValidFlowShape, validateFlow } from '../shared/schemas.js';
 import type { ApiConfigResponse, FlowListResponse, LLMStreamDoneEvent, LLMStreamEvent, SaveFlowResponse } from '../shared/types.js';
-import { createDefaultTiledWorkspace, projectTiledColumns } from '../shared/workspace.js';
+import {
+  DEFAULT_TILED_SECTION_HEIGHT,
+  MAX_TILED_COLUMN_WIDTH,
+  MAX_TILED_SECTION_HEIGHT,
+  MIN_TILED_COLUMN_WIDTH,
+  MIN_TILED_SECTION_HEIGHT,
+  createDefaultTiledWorkspace,
+  projectTiledColumns,
+} from '../shared/workspace.js';
 
 
 const NODE_WIDTH = 340;
@@ -133,6 +141,7 @@ function bindEvents() {
   DOM.nodesLayer.addEventListener('mousedown', onNodesLayerMouseDown);
   DOM.nodesLayer.addEventListener('click', onNodesLayerClick);
   DOM.tiledWorkspace.addEventListener('click', onTiledWorkspaceClick);
+  DOM.tiledWorkspace.addEventListener('scroll', onTiledWorkspaceScroll, true);
   window.addEventListener('mousemove', onWindowMouseMove);
   window.addEventListener('mouseup', onWindowMouseUp);
   document.addEventListener('mouseup', (event) => {
@@ -241,6 +250,7 @@ function bindEvents() {
 
   window.addEventListener('keydown', (event) => {
     updateInteractionModes(event);
+    if (state.activeView === 'tiled' && handleTiledKeydown(event)) return;
     if (event.key !== 'Escape') return;
     if (state.isMarqueeSelecting) finishMarqueeSelection({ cancel: true });
     hideTooltip();
@@ -595,23 +605,29 @@ function renderTiledWorkspace() {
     columnEl.innerHTML = `
       <header class="tiled-column-header">
         <span>Depth ${column.depth}</span>
-        <span>${column.pageIds.length} pages</span>
+        <span class="tiled-column-actions">
+          <button class="tiled-mini-btn" data-tiled-action="column-narrow" title="缩窄列">−</button>
+          <button class="tiled-mini-btn" data-tiled-action="column-widen" title="加宽列">＋</button>
+          <span>${column.pageIds.length} pages</span>
+        </span>
       </header>
     `;
 
     for (const nodeId of column.pageIds) {
       const node = getNode(nodeId);
       if (!node) continue;
-      columnEl.appendChild(renderTiledSection(node, workspace.pages[node.id]));
+      columnEl.appendChild(renderTiledSection(node, workspace.pages[node.id], workspace));
     }
     DOM.tiledWorkspace.appendChild(columnEl);
   }
 }
 
-function renderTiledSection(node, pageState = null) {
+function renderTiledSection(node, pageState = null, workspace = null) {
   const display = pageState?.display || 'normal';
+  const isFocused = workspace?.focus?.nodeId === node.id;
   const section = document.createElement('article');
-  section.className = `tiled-section${display === 'title' ? ' title-only' : ''}`;
+  section.className = `tiled-section${display === 'title' ? ' title-only' : ''}${isFocused ? ' focused' : ''}`;
+  section.tabIndex = 0;
   section.dataset.nodeId = node.id;
   section.style.setProperty('--node-color', node.colorIndex >= 0
     ? `var(--hl-${node.colorIndex % 5}-bg)`
@@ -622,7 +638,12 @@ function renderTiledSection(node, pageState = null) {
   header.className = 'tiled-section-header';
   header.innerHTML = `
     <span class="tiled-section-title"></span>
-    <span class="tiled-section-meta"></span>
+    <span class="tiled-section-actions">
+      <button class="tiled-mini-btn" data-tiled-action="section-shorter" title="降低 section">−</button>
+      <button class="tiled-mini-btn" data-tiled-action="section-taller" title="增高 section">＋</button>
+      <button class="tiled-mini-btn" data-tiled-action="section-title-toggle" title="仅标题/展开">T</button>
+      <span class="tiled-section-meta"></span>
+    </span>
   `;
   header.querySelector('.tiled-section-title').textContent = node.title || '未命名节点';
   header.querySelector('.tiled-section-meta').textContent = `${(node.content || '').length} 字`;
@@ -644,6 +665,16 @@ function renderTiledSection(node, pageState = null) {
 }
 
 function onTiledWorkspaceClick(event) {
+  const actionButton = (event.target as Element).closest('[data-tiled-action]') as HTMLElement | null;
+  if (actionButton) {
+    event.preventDefault();
+    focusTiledSection(actionButton.closest('.tiled-section') as HTMLElement | null);
+    runTiledAction(actionButton);
+    return;
+  }
+
+  focusTiledSection((event.target as Element).closest('.tiled-section') as HTMLElement | null);
+
   const annotated = (event.target as Element).closest('mark.annotated, .math-node.annotated-math') as HTMLElement | null;
   const targetId = annotated?.dataset.refId;
   if (targetId) {
@@ -656,6 +687,132 @@ function onTiledWorkspaceClick(event) {
   const section = header?.closest('.tiled-section') as HTMLElement | null;
   const nodeId = section?.dataset.nodeId;
   if (nodeId) openFullscreen(nodeId);
+}
+
+function handleTiledKeydown(event) {
+  if (isEditableTarget(event.target)) return false;
+  const key = event.key;
+  const handledKeys = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' ', '[', ']']);
+  if (!handledKeys.has(key)) return false;
+
+  if (key === 'ArrowLeft' || key === 'ArrowRight' || key === 'ArrowUp' || key === 'ArrowDown') {
+    moveTiledFocus(key);
+  } else if (key === ' ') {
+    runTiledFocusedAction('section-title-toggle');
+  } else if (key === '[') {
+    runTiledFocusedAction('section-shorter');
+  } else if (key === ']') {
+    runTiledFocusedAction('section-taller');
+  }
+  event.preventDefault();
+  return true;
+}
+
+function moveTiledFocus(key) {
+  const workspace = ensureTiledWorkspace();
+  const columns = workspace.columns || [];
+  if (columns.length === 0) return;
+  const currentNodeId = workspace.focus?.nodeId;
+  let columnIndex = Math.max(0, columns.findIndex((column) => column.pageIds.includes(currentNodeId)));
+  if (columnIndex < 0) columnIndex = 0;
+  let pageIndex = Math.max(0, columns[columnIndex].pageIds.indexOf(currentNodeId));
+
+  if (key === 'ArrowLeft') {
+    columnIndex = Math.max(0, columnIndex - 1);
+    pageIndex = Math.min(pageIndex, columns[columnIndex].pageIds.length - 1);
+  } else if (key === 'ArrowRight') {
+    columnIndex = Math.min(columns.length - 1, columnIndex + 1);
+    pageIndex = Math.min(pageIndex, columns[columnIndex].pageIds.length - 1);
+  } else if (key === 'ArrowUp') {
+    pageIndex = Math.max(0, pageIndex - 1);
+  } else if (key === 'ArrowDown') {
+    pageIndex = Math.min(columns[columnIndex].pageIds.length - 1, pageIndex + 1);
+  }
+
+  const nextNodeId = columns[columnIndex].pageIds[Math.max(0, pageIndex)];
+  if (!nextNodeId) return;
+  workspace.focus = { workspaceId: workspace.id, region: 'columns', columnId: columns[columnIndex].id, nodeId: nextNodeId };
+  workspace.updatedAt = new Date().toISOString();
+  renderTiledWorkspace();
+  DOM.tiledWorkspace.querySelector(`[data-node-id="${cssAttr(nextNodeId)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+function runTiledFocusedAction(action) {
+  const workspace = ensureTiledWorkspace();
+  const nodeId = workspace.focus?.nodeId || workspace.columns[0]?.pageIds[0];
+  if (!nodeId) return;
+  const pageState = ensureTiledPageState(nodeId);
+  if (action === 'section-title-toggle') {
+    pageState.display = pageState.display === 'title' ? 'normal' : 'title';
+  } else if (action === 'section-shorter' || action === 'section-taller') {
+    const delta = action === 'section-taller' ? 60 : -60;
+    pageState.height = clamp(Number(pageState.height) + delta, MIN_TILED_SECTION_HEIGHT, MAX_TILED_SECTION_HEIGHT);
+  }
+  workspace.focus = { workspaceId: workspace.id, region: 'columns', nodeId };
+  workspace.updatedAt = new Date().toISOString();
+  renderTiledWorkspace();
+}
+
+function focusTiledSection(section) {
+  const nodeId = section?.dataset.nodeId;
+  if (!nodeId) return;
+  const workspace = ensureTiledWorkspace();
+  const column = workspace.columns.find((item) => item.pageIds.includes(nodeId));
+  workspace.focus = { workspaceId: workspace.id, region: 'columns', columnId: column?.id, nodeId };
+  workspace.updatedAt = new Date().toISOString();
+  DOM.tiledWorkspace.querySelectorAll('.tiled-section.focused').forEach((item) => item.classList.remove('focused'));
+  section.classList.add('focused');
+}
+
+function onTiledWorkspaceScroll(event) {
+  const content = (event.target as Element).closest?.('.tiled-content') as HTMLElement | null;
+  const nodeId = content?.closest('.tiled-section')?.getAttribute('data-node-id');
+  if (!content || !nodeId) return;
+  const pageState = ensureTiledPageState(nodeId);
+  pageState.scrollTop = content.scrollTop;
+}
+
+function runTiledAction(button) {
+  const action = button.dataset.tiledAction;
+  const workspace = ensureTiledWorkspace();
+  const columnEl = button.closest('.tiled-column') as HTMLElement | null;
+  const sectionEl = button.closest('.tiled-section') as HTMLElement | null;
+
+  if ((action === 'column-narrow' || action === 'column-widen') && columnEl) {
+    const columnId = columnEl.dataset.columnId;
+    const column = workspace.columns.find((item) => item.id === columnId);
+    if (!column) return;
+    const delta = action === 'column-widen' ? 60 : -60;
+    column.width = clamp(Number(column.width) + delta, MIN_TILED_COLUMN_WIDTH, MAX_TILED_COLUMN_WIDTH);
+    workspace.updatedAt = new Date().toISOString();
+    renderTiledWorkspace();
+    return;
+  }
+
+  const nodeId = sectionEl?.dataset.nodeId;
+  if (!nodeId) return;
+  const pageState = ensureTiledPageState(nodeId);
+  if (action === 'section-shorter' || action === 'section-taller') {
+    const delta = action === 'section-taller' ? 60 : -60;
+    pageState.height = clamp(Number(pageState.height) + delta, MIN_TILED_SECTION_HEIGHT, MAX_TILED_SECTION_HEIGHT);
+  } else if (action === 'section-title-toggle') {
+    pageState.display = pageState.display === 'title' ? 'normal' : 'title';
+  }
+  workspace.updatedAt = new Date().toISOString();
+  renderTiledWorkspace();
+}
+
+function ensureTiledPageState(nodeId) {
+  const workspace = ensureTiledWorkspace();
+  const existing = workspace.pages[nodeId];
+  if (existing) return existing;
+  workspace.pages[nodeId] = {
+    nodeId,
+    display: 'normal',
+    height: DEFAULT_TILED_SECTION_HEIGHT,
+    scrollTop: 0,
+  };
+  return workspace.pages[nodeId];
 }
 
 function normalizeNode(raw) {
