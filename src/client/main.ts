@@ -140,6 +140,7 @@ function bindEvents() {
   DOM.nodesLayer.addEventListener('mousedown', onNodesLayerMouseDown);
   DOM.nodesLayer.addEventListener('click', onNodesLayerClick);
   DOM.tiledWorkspace.addEventListener('click', tiledWorkspace.handleClick);
+  DOM.tiledWorkspace.addEventListener('auxclick', tiledWorkspace.handleAuxClick);
   DOM.tiledWorkspace.addEventListener('contextmenu', onTiledContextMenu);
   DOM.tiledWorkspace.addEventListener('scroll', tiledWorkspace.handleScroll, true);
   DOM.tiledWorkspace.addEventListener('pointerdown', tiledWorkspace.handlePointerDown);

@@ -32,6 +32,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
   let isAdjustingRootScroll = false;
   let relationAnimationFrame = 0;
   let resizeGesture: any = null;
+  let panGesture: any = null;
   let suppressNextClick = false;
 
   function ensureWorkspace() {
@@ -467,6 +468,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
   }
 
   function handlePointerDown(event) {
+    if (event.button === 1) return startPanGesture(event);
     if (!event.shiftKey || event.button !== 0 || isEditableTarget(event.target)) return false;
     const section = (event.target as Element).closest('.tiled-section') as HTMLElement | null;
     if (!section) return false;
@@ -495,7 +497,24 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     return true;
   }
 
+  function startPanGesture(event) {
+    panGesture = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startScrollLeft: root.scrollLeft,
+      startScrollTop: root.scrollTop,
+      moved: false,
+    };
+    root.classList.add('tiled-panning');
+    root.setPointerCapture?.(event.pointerId);
+    hideNativeSelection();
+    event.preventDefault();
+    return true;
+  }
+
   function handlePointerMove(event) {
+    if (panGesture && event.pointerId === panGesture.pointerId) return updatePanGesture(event);
     if (!resizeGesture || event.pointerId !== resizeGesture.pointerId) return false;
     const dx = event.clientX - resizeGesture.startX;
     const dy = event.clientY - resizeGesture.startY;
@@ -512,7 +531,19 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     return true;
   }
 
+  function updatePanGesture(event) {
+    const dx = event.clientX - panGesture.startX;
+    const dy = event.clientY - panGesture.startY;
+    if (Math.abs(dx) + Math.abs(dy) > 3) panGesture.moved = true;
+    root.scrollLeft = panGesture.startScrollLeft - dx;
+    root.scrollTop = panGesture.startScrollTop - dy;
+    requestAnimationFrame(drawRelations);
+    event.preventDefault();
+    return true;
+  }
+
   function finishPointerGesture(event) {
+    if (panGesture && event.pointerId === panGesture.pointerId) return finishPanGesture(event);
     if (!resizeGesture || event.pointerId !== resizeGesture.pointerId) return false;
     suppressNextClick = Boolean(resizeGesture.moved);
     root.releasePointerCapture?.(event.pointerId);
@@ -521,6 +552,25 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     resizeGesture = null;
     event.preventDefault();
     return true;
+  }
+
+  function finishPanGesture(event) {
+    suppressNextClick = Boolean(panGesture.moved);
+    root.releasePointerCapture?.(event.pointerId);
+    root.classList.remove('tiled-panning');
+    panGesture = null;
+    event.preventDefault();
+    return true;
+  }
+
+  function handleAuxClick(event) {
+    if (event.button !== 1) return false;
+    event.preventDefault();
+    return true;
+  }
+
+  function hideNativeSelection() {
+    window.getSelection()?.removeAllRanges();
   }
 
   function handleClick(event) {
@@ -920,6 +970,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     handlePointerMove,
     handlePointerUp: finishPointerGesture,
     handlePointerCancel: finishPointerGesture,
+    handleAuxClick,
     renderStreamdownContent,
     updateNodeShell,
     focusNode: focusWorkspaceNode,
