@@ -114,26 +114,35 @@ Important invariants:
 7. Compute base stack layout: each panel starts immediately after the previous panel.
 8. Compute contextual column offsets from current focus:
    - focused column offset = 0;
-   - for each other column, choose the highest-scoring related panel in that column;
-   - offset the whole stack by a stable formula, not an ad-hoc visual heuristic.
+   - compute a stable `deltaY` for every adjacent depth-column pair;
+   - integrate those deltas left and right from the focused column.
 
-### Column offset formula
+### Adjacent-column offset formula
 
-For any non-focused column `C`:
+The invariant is pairwise: every adjacent column pair has a relative displacement computed by the same formula. Columns are not independently aligned to the focused panel.
+
+For adjacent columns `L` and `R`:
 
 ```text
-offsetY(C) = focusBaseY + focusAnchor - candidateBaseY - candidateAnchor
+deltaY(L, R) = sourceBaseY + sourceAnchor - targetBaseY - targetAnchor
 ```
 
 Where:
 
-- `focusBaseY` comes from the current overall layout: the focused panel's y in its own depth stack before contextual offsets.
-- `candidateBaseY` comes from the current overall layout: the selected related panel's y in column `C` before contextual offsets.
-- `focusAnchor` is derived from the focused panel's current visible interval in the workspace viewport, usually the center of the visible interval clipped to the panel.
-- `candidateAnchor` is the corresponding anchor in the candidate panel, clamped to that panel's height.
-- The candidate panel is chosen from current layout + focus + relation scores.
+- `source` / `target` are the highest-scoring related panel pair across the adjacent columns under the current focus context.
+- `sourceBaseY` and `targetBaseY` come from the current overall layout before contextual offsets.
+- `sourceAnchor` is normally the source panel center; if source is the focused panel, it is derived from the focused panel's current visible interval.
+- `targetAnchor` is the corresponding anchor in the target panel, clamped to that panel's height.
 
-This means relative displacement between adjacent columns is a deterministic function of:
+Absolute offsets are then integrated from the focused column as anchor:
+
+```text
+offsetY(focusColumn) = 0
+offsetY(column[i + 1]) = offsetY(column[i]) + deltaY(column[i], column[i + 1])
+offsetY(column[i - 1]) = offsetY(column[i]) - deltaY(column[i - 1], column[i])
+```
+
+So the whole workspace satisfies a deterministic adjacent-column formula whose parameters are:
 
 ```text
 current overall layout + focused panel id + focused panel visible interval position
