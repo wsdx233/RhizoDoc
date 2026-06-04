@@ -84,6 +84,67 @@ export type RhizoCanvas = {
   scale: number;
 };
 
+export type TiledPageDisplay = 'title' | 'compact' | 'normal' | 'expanded';
+
+export type TiledProjection = {
+  mode: 'depth';
+  rootId?: string;
+  maxDepth?: number;
+  includeOrphans: boolean;
+};
+
+export type TiledColumn = {
+  id: string;
+  depth: number;
+  width: number;
+  pageIds: string[];
+  collapsed?: boolean;
+};
+
+export type TiledPageState = {
+  nodeId: string;
+  display: TiledPageDisplay;
+  height: number;
+  scrollTop: number;
+  pinned?: boolean;
+};
+
+export type TiledFloatingPage = {
+  nodeId: string;
+  width: number;
+  height: number;
+  x?: number;
+  y?: number;
+  zIndex: number;
+  display: Exclude<TiledPageDisplay, 'title'>;
+};
+
+export type TiledFocus = {
+  workspaceId: string;
+  region: 'columns' | 'floating' | 'search';
+  columnId?: string;
+  nodeId?: string;
+};
+
+export type TiledSearchState = {
+  query: string;
+  selectedNodeId?: string;
+};
+
+export type RhizoWorkspace = {
+  id: string;
+  name: string;
+  kind: 'tiled';
+  createdAt: string;
+  updatedAt: string;
+  projection: TiledProjection;
+  columns: TiledColumn[];
+  pages: Record<string, TiledPageState>;
+  floating: TiledFloatingPage[];
+  focus: TiledFocus | null;
+  search?: TiledSearchState;
+};
+
 export type RhizoFlow = {
   version: number;
   app: string;
@@ -94,6 +155,8 @@ export type RhizoFlow = {
   nodes: RhizoNode[];
   edges: RhizoEdge[];
   annotations: RhizoAnnotation[];
+  workspaces?: RhizoWorkspace[];
+  activeWorkspaceId?: string;
   [key: string]: unknown;
 };
 

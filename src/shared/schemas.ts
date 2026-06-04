@@ -1,4 +1,5 @@
 import type { LLMGeneratePayload, LLMMode, RhizoAnnotation, RhizoCanvas, RhizoEdge, RhizoFlow, RhizoNode } from './types.js';
+import { normalizeTiledWorkspaces } from './workspace.js';
 
 /**
  * Runtime schemas for RhizoDoc data exchanged between browser and server.
@@ -68,7 +69,12 @@ export function validateFlow(flow: unknown, { requireEdges = true }: { requireEd
     .filter((annotation) => annotation.sourceNodeId && annotation.targetNodeId)
     .filter((annotation) => nodeIds.has(annotation.sourceNodeId) && nodeIds.has(annotation.targetNodeId));
 
-  return {
+  const workspaceState = normalizeTiledWorkspaces(flow.workspaces, {
+    nodes,
+    edges,
+    activeWorkspaceId: flow.activeWorkspaceId,
+  });
+  const normalizedFlow = {
     ...flow,
     version: finiteNumber(flow.version, FLOW_SCHEMA_VERSION),
     app: cleanString(flow.app || RHIZODOC_APP_ID),
@@ -80,6 +86,16 @@ export function validateFlow(flow: unknown, { requireEdges = true }: { requireEd
     edges,
     annotations,
   } as RhizoFlow;
+
+  if (workspaceState.workspaces.length > 0) {
+    normalizedFlow.workspaces = workspaceState.workspaces;
+    normalizedFlow.activeWorkspaceId = workspaceState.activeWorkspaceId;
+  } else {
+    delete normalizedFlow.workspaces;
+    delete normalizedFlow.activeWorkspaceId;
+  }
+
+  return normalizedFlow;
 }
 
 export function validateNode(raw: unknown, index = 0, seenIds = new Set<string>()): RhizoNode {

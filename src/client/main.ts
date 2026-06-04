@@ -66,6 +66,8 @@ const state: any = {
   pendingLLM: null,
   fullscreenNodeId: null,
   flowName: '未命名流程图',
+  workspaces: [],
+  activeWorkspaceId: null,
   appConfig: null,
   minimapBounds: null,
 };
@@ -517,6 +519,8 @@ function resetGraph() {
   state.contextNodeIds = [];
   clearNodeSelection();
   state.fullscreenNodeId = null;
+  state.workspaces = [];
+  state.activeWorkspaceId = null;
   DOM.fullscreenOverlay.classList.add('hidden');
   DOM.selectionBox.style.display = 'none';
   DOM.nodesLayer.innerHTML = '';
@@ -2082,7 +2086,7 @@ function centerCanvasFromMinimapEvent(event) {
 }
 
 function exportFlow() {
-  return {
+  const flow: any = {
     version: 1,
     app: 'rhizodoc',
     name: state.flowName,
@@ -2093,6 +2097,11 @@ function exportFlow() {
     edges: state.edges.map((edge) => ({ ...edge })),
     annotations: state.annotations.map((annotation) => ({ ...annotation })),
   };
+  if (state.workspaces.length > 0) {
+    flow.workspaces = state.workspaces.map((workspace) => ({ ...workspace }));
+    if (state.activeWorkspaceId) flow.activeWorkspaceId = state.activeWorkspaceId;
+  }
+  return flow;
 }
 
 function downloadFlow() {
@@ -2134,6 +2143,8 @@ function loadFlow(flow) {
     text: String(annotation.text || ''),
     colorIndex: Number.isFinite(Number(annotation.colorIndex)) ? Number(annotation.colorIndex) : 0,
   })).filter((annotation) => annotation.sourceNodeId && annotation.targetNodeId);
+  state.workspaces = normalizedFlow.workspaces ? structuredClone(normalizedFlow.workspaces) : [];
+  state.activeWorkspaceId = normalizedFlow.activeWorkspaceId || null;
 
   renderAll();
   updateCanvasTransform();
