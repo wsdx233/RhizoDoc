@@ -139,7 +139,7 @@ This means relative displacement between adjacent columns is a deterministic fun
 current overall layout + focused panel id + focused panel visible interval position
 ```
 
-The result can change while the user scrolls the workspace, but it should be recomputed by patching positions, not by rebuilding Markdown content.
+The result can change while the user scrolls the workspace, but it should be recomputed by patching positions, not by rebuilding Markdown content. Position changes should animate so the user can perceive continuity in the relation field.
 
 ## Relationship Tension
 
@@ -197,7 +197,8 @@ The current DOM implementation can remain for MVP:
 - add viewport-sized vertical slack above and below the field, so over-scroll can move every panel out of view;
 - draw relation SVG paths from measured DOM anchors;
 - recalculate offsets and relation paths when focus, order, height, workspace scroll, or annotations change;
-- when only offsets change because of workspace scroll, patch section positions instead of rebuilding Markdown DOM.
+- when only offsets change because of workspace scroll, patch section positions instead of rebuilding Markdown DOM;
+- animate patched `left/top/width/height` changes and redraw relation paths during the transition.
 
 A future renderer island may own the tiled workspace once interactions grow, but the pure projection/order rules should remain shared TypeScript.
 

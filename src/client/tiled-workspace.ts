@@ -31,6 +31,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
   const tailStateByNodeId = new Map();
   let pendingLayoutRefresh = 0;
   let isAdjustingRootScroll = false;
+  let relationAnimationFrame = 0;
 
   function ensureWorkspace() {
     let workspace = state.workspaces.find((item) => item.id === state.activeWorkspaceId) || state.workspaces[0];
@@ -144,6 +145,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     for (const layout of layouts) {
       const section = fieldEl.querySelector(`[data-node-id="${cssAttr(layout.nodeId)}"]`) as HTMLElement | null;
       if (!section) continue;
+      section.classList.toggle('focused', workspace.focus?.nodeId === layout.nodeId);
       section.dataset.stackY = String(layout.y);
       section.style.left = `${layout.x}px`;
       section.style.top = `${fieldOffsetY + layout.y}px`;
@@ -156,7 +158,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     root.scrollTop = previousScrollTop + fieldOffsetY - previousFieldOffsetY;
     requestAnimationFrame(() => {
       isAdjustingRootScroll = false;
-      drawRelations();
+      animateRelations();
     });
   }
 
@@ -177,7 +179,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
   }
 
   function getViewportVerticalSlack() {
-    return Math.max(root.clientHeight || 0, TILED_MIN_VERTICAL_SCROLL_SLACK);
+    return (root.clientHeight || 0) + TILED_MIN_VERTICAL_SCROLL_SLACK;
   }
 
   function getFieldGeometry(columns, layouts) {
@@ -506,7 +508,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     const nextColumn = columns.find((column) => column.pageIds.includes(nextNodeId)) || columns[columnIndex];
     workspace.focus = { workspaceId: workspace.id, region: 'columns', columnId: nextColumn.id, nodeId: nextNodeId };
     workspace.updatedAt = new Date().toISOString();
-    render();
+    refreshLayoutPositions();
     root.querySelector(`[data-node-id="${cssAttr(nextNodeId)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
 
@@ -536,7 +538,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     [column.pageIds[index], column.pageIds[swapIndex]] = [column.pageIds[swapIndex], column.pageIds[index]];
     workspace.focus = { workspaceId: workspace.id, region: 'columns', columnId: column.id, nodeId };
     workspace.updatedAt = new Date().toISOString();
-    render();
+    refreshLayoutPositions();
     root.querySelector(`[data-node-id="${cssAttr(nodeId)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
 
@@ -554,6 +556,20 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     if (outgoingEdge?.targetId && getNode(outgoingEdge.targetId)) return outgoingEdge.targetId;
     const child = state.nodes.find((node) => node.parentId === nodeId);
     return child?.id || '';
+  }
+
+  function animateRelations(duration = 320) {
+    if (relationAnimationFrame) cancelAnimationFrame(relationAnimationFrame);
+    const start = performance.now();
+    const tick = () => {
+      drawRelations();
+      if (performance.now() - start < duration) {
+        relationAnimationFrame = requestAnimationFrame(tick);
+      } else {
+        relationAnimationFrame = 0;
+      }
+    };
+    relationAnimationFrame = requestAnimationFrame(tick);
   }
 
   function drawRelations() {
@@ -640,7 +656,8 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     }
     workspace.focus = { workspaceId: workspace.id, region: 'columns', nodeId };
     workspace.updatedAt = new Date().toISOString();
-    render();
+    if (action === 'section-title-toggle') render();
+    else refreshLayoutPositions();
   }
 
   function focusSection(section) {
@@ -652,7 +669,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     workspace.focus = { workspaceId: workspace.id, region: 'columns', columnId: column?.id, nodeId };
     workspace.updatedAt = new Date().toISOString();
     if (changed) {
-      render();
+      refreshLayoutPositions();
     } else {
       root.querySelectorAll('.tiled-section.focused').forEach((item) => item.classList.remove('focused'));
       section.classList.add('focused');
@@ -696,7 +713,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
       const delta = action === 'column-widen' ? 60 : -60;
       column.width = clamp(Number(column.width) + delta, MIN_TILED_COLUMN_WIDTH, MAX_TILED_COLUMN_WIDTH);
       workspace.updatedAt = new Date().toISOString();
-      render();
+      refreshLayoutPositions();
       return;
     }
 
@@ -710,7 +727,8 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
       pageState.display = pageState.display === 'title' ? 'normal' : 'title';
     }
     workspace.updatedAt = new Date().toISOString();
-    render();
+    if (action === 'section-title-toggle') render();
+    else refreshLayoutPositions();
   }
 
   function ensurePageState(nodeId) {
