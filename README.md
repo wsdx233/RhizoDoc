@@ -62,11 +62,7 @@ pnpm build
 pnpm start
 ```
 
-Open:
-
-```text
-http://localhost:3000
-```
+Open the server URL printed by `pnpm start`.
 
 For development, run the API server and Vite dev server together:
 
@@ -79,6 +75,8 @@ Then open the Vite URL, usually:
 ```text
 http://localhost:5173
 ```
+
+In development the Express process is API-only and intentionally does not serve `dist/`, so stale production bundles cannot mask source changes.
 
 ## Configuration
 
@@ -107,7 +105,7 @@ RhizoDoc uses `rhizodoc.config.json` for app-specific settings. The file is inte
 | Field | Default | Description |
 | --- | --- | --- |
 | `server.host` | `127.0.0.1` | Express bind address. Defaults to localhost for local-first safety; set to `0.0.0.0` only when you intentionally expose the app on your LAN. Can also be overridden by `--host`. |
-| `server.port` | `3000` | Express server port. Can also be overridden by `--port`. |
+| `server.port` | `3000` | Express server port. Can also be overridden by `--port`. Vite reads `rhizodoc.config.json` and proxies `/api` to this port during `pnpm dev`. |
 | `server.jsonLimit` | `20mb` | JSON request body limit. |
 | `pi.provider` | Pi default provider | Optional project-only Pi provider override. Empty string means use Pi default. |
 | `pi.model` | Pi default model | Optional project-only Pi model override. Empty string means use Pi default. |

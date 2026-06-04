@@ -8,8 +8,8 @@
   "scripts": {
     "start": "tsx server.ts",
     "serve": "tsx server.ts",
-    "dev": "concurrently -k -n API,WEB -c cyan,magenta \"tsx watch server.ts\" \"vite --host 0.0.0.0\"",
-    "dev:api": "tsx watch server.ts",
+    "dev": "concurrently -k -n API,WEB -c cyan,magenta \"RHIZODOC_DEV=1 tsx watch server.ts\" \"vite --host 0.0.0.0\"",
+    "dev:api": "RHIZODOC_DEV=1 tsx watch server.ts",
     "dev:web": "vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "pnpm build && tsx server.ts",

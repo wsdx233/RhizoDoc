@@ -20,8 +20,11 @@ const APP_CONFIG_PATH = cliOptions.config ? path.resolve(cliOptions.config) : pa
 const appConfig = await loadRhizoDocConfig(APP_CONFIG_PATH);
 const PORT = cliOptions.port ?? parsePort(appConfig.server.port, 3000);
 const HOST = cliOptions.host ?? appConfig.server.host ?? '127.0.0.1';
+const IS_DEV_SERVER = isDevServer();
+const VITE_DEV_URL = process.env.RHIZODOC_VITE_URL || 'http://localhost:5173';
 const DIST_DIR = path.join(__dirname, 'dist');
 const HAS_CLIENT_BUILD = await directoryExists(DIST_DIR);
+const SERVE_BUILT_CLIENT = !IS_DEV_SERVER && HAS_CLIENT_BUILD;
 const FLOWS_DIR = resolveProjectPath(appConfig.storage.flowsDir);
 const AGENT_DIR = getAgentDir();
 const authStorage = AuthStorage.create(path.join(AGENT_DIR, 'auth.json'));
@@ -33,8 +36,10 @@ await fs.mkdir(FLOWS_DIR, { recursive: true });
 
 app.disable('x-powered-by');
 app.use(express.json({ limit: appConfig.server.jsonLimit }));
-if (HAS_CLIENT_BUILD) {
+if (SERVE_BUILT_CLIENT) {
   app.use(express.static(DIST_DIR));
+} else if (IS_DEV_SERVER) {
+  console.log('RhizoDoc dev: API-only server; Vite serves the browser client.');
 } else {
   console.warn('未找到 dist/ 前端构建产物；API 仍会启动。请运行 pnpm build，或开发时访问 Vite 服务。');
 }
@@ -145,24 +150,42 @@ app.delete('/api/flows/:name', async (req, res) => {
 
 app.use((req, res, next) => {
   if (req.method === 'GET' && req.accepts('html')) {
-    if (HAS_CLIENT_BUILD) {
+    if (SERVE_BUILT_CLIENT) {
       res.sendFile(path.join(DIST_DIR, 'index.html'));
       return;
     }
-    res.status(503).send('RhizoDoc 前端尚未构建。请运行 pnpm build，或开发时访问 Vite 服务（通常是 http://localhost:5173）。');
+    res.status(IS_DEV_SERVER ? 200 : 503).type('text/plain').send(clientUnavailableMessage());
     return;
   }
   next();
 });
 
 app.listen(PORT, HOST, async () => {
-  console.log(`RhizoDoc 已启动: http://${HOST}:${PORT}`);
+  console.log(`RhizoDoc API 已启动: http://${HOST}:${PORT}`);
+  if (IS_DEV_SERVER) {
+    console.log(`RhizoDoc Web 开发入口: ${VITE_DEV_URL}`);
+  } else if (SERVE_BUILT_CLIENT) {
+    console.log(`RhizoDoc Web 已启动: http://${HOST}:${PORT}`);
+  } else {
+    console.warn('RhizoDoc Web 未启动: dist/ 不存在，请先运行 pnpm build。');
+  }
   console.log(`RhizoDoc config: ${appConfig.loaded ? APP_CONFIG_PATH : 'defaults (rhizodoc.config.json not found)'}`);
   console.log(`Pi agent dir: ${AGENT_DIR}`);
   const config = await getPiModelConfig();
   console.log(`Pi model: ${config.provider}/${config.modelId}, thinking: ${config.thinkingLevel || 'off'}`);
   if (!config.ready) console.warn(`警告: Pi 模型不可用：${config.error || '未配置模型凭据'}`);
 });
+
+function isDevServer(): boolean {
+  return process.env.RHIZODOC_DEV === '1' || process.env.NODE_ENV === 'development';
+}
+
+function clientUnavailableMessage(): string {
+  if (IS_DEV_SERVER) {
+    return `RhizoDoc API development server.\nThis process does not serve dist/. Open Vite instead: ${VITE_DEV_URL}\n`;
+  }
+  return 'RhizoDoc client is not built. Run pnpm build, then pnpm start.\n';
+}
 
 function normalizeLLMPayload(raw: unknown): LLMGeneratePayload {
   return validateLLMPayload(raw);
