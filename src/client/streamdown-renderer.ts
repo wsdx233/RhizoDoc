@@ -9,7 +9,7 @@ let islandModule: StreamdownIslandModule | null = null;
 
 export async function renderStreamdownMarkdown(container: HTMLElement, markdown: string, options: StreamdownRenderOptions = {}) {
   const island = await loadStreamdownIsland();
-  island.renderStreamdownIsland(container, markdown, options);
+  await island.renderStreamdownIsland(container, markdown, options);
 }
 
 export function unmountStreamdownMarkdown(container: HTMLElement | null | undefined) {

@@ -80,19 +80,21 @@ export function createTiledRenderController(options: TiledRenderControllerOption
       content.className = 'tiled-content markdown-body';
       const host = document.createElement('div');
       host.className = 'tiled-markdown-host';
+      const renderVersion = String((Number(host.dataset.renderVersion) || 0) + 1);
+      host.dataset.renderVersion = renderVersion;
       renderStreamdownMarkdown(host, node.content || '', { streaming: false }).then(() => {
-        if (!host.isConnected) return;
+        if (!host.isConnected || host.dataset.renderVersion !== renderVersion) return;
         const nodeAnnotations = state.annotations.filter((annotation) => annotation.sourceNodeId === node.id);
         nodeAnnotations.forEach((annotation) => applyAnnotationToContainer(host, annotation));
+        content.scrollTop = Math.max(0, Number(pageState?.scrollTop) || 0);
+        attachScrollIntent(node.id, content);
         if (nodeAnnotations.length > 0) onContentAnchorsChanged?.(node.id);
       });
       const sentinel = document.createElement('div');
       sentinel.className = 'tiled-bottom-sentinel';
       sentinel.setAttribute('aria-hidden', 'true');
       content.append(host, sentinel);
-      content.scrollTop = Math.max(0, Number(pageState?.scrollTop) || 0);
       section.appendChild(content);
-      attachScrollIntent(node.id, content);
     }
 
     return section;

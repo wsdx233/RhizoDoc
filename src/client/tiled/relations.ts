@@ -9,9 +9,23 @@ type TiledRelationsControllerOptions = {
 export function createTiledRelationsController(options: TiledRelationsControllerOptions) {
   const { root, state, ensureWorkspace } = options;
   let relationAnimationFrame = 0;
+  let pendingDrawFrame = 0;
+
+  function scheduleDraw() {
+    if (pendingDrawFrame) return;
+    pendingDrawFrame = requestAnimationFrame(() => {
+      pendingDrawFrame = 0;
+      draw();
+    });
+  }
 
   function animate(duration = 320) {
+    if (pendingDrawFrame) {
+      cancelAnimationFrame(pendingDrawFrame);
+      pendingDrawFrame = 0;
+    }
     if (relationAnimationFrame) cancelAnimationFrame(relationAnimationFrame);
+    root.classList.add('tiled-relations-animating');
     const start = performance.now();
     const tick = () => {
       draw();
@@ -19,12 +33,17 @@ export function createTiledRelationsController(options: TiledRelationsController
         relationAnimationFrame = requestAnimationFrame(tick);
       } else {
         relationAnimationFrame = 0;
+        root.classList.remove('tiled-relations-animating');
       }
     };
     relationAnimationFrame = requestAnimationFrame(tick);
   }
 
   function draw() {
+    if (pendingDrawFrame) {
+      cancelAnimationFrame(pendingDrawFrame);
+      pendingDrawFrame = 0;
+    }
     const layer = root.querySelector('.tiled-relations-layer') as SVGSVGElement | null;
     if (!layer || state.activeView !== 'tiled') return;
     layer.innerHTML = '';
@@ -35,9 +54,8 @@ export function createTiledRelationsController(options: TiledRelationsController
     layer.setAttribute('height', String(height));
     layer.setAttribute('viewBox', `0 0 ${width} ${height}`);
 
-    root.querySelectorAll('.tiled-section.related, .tiled-section.annotation-related').forEach((section) => {
-      section.classList.remove('related', 'annotation-related');
-    });
+    const activeAnnotationSections = new Set<HTMLElement>();
+    const activeRelatedSections = new Set<HTMLElement>();
 
     const workspace = ensureWorkspace();
     const focusedId = workspace.focus?.nodeId || '';
@@ -57,10 +75,32 @@ export function createTiledRelationsController(options: TiledRelationsController
       const active = focusedId && (relation.sourceId === focusedId || relation.targetId === focusedId);
       appendRelationPath(layer, source, target, relation.type, relation.color, Boolean(active));
       if (active) {
-        source.section.classList.add(relation.type === 'annotation' ? 'annotation-related' : 'related');
-        target.section.classList.add(relation.type === 'annotation' ? 'annotation-related' : 'related');
+        if (relation.type === 'annotation') {
+          activeAnnotationSections.add(source.section);
+          activeAnnotationSections.add(target.section);
+        } else {
+          activeRelatedSections.add(source.section);
+          activeRelatedSections.add(target.section);
+        }
       }
     }
+
+    updateRelationClasses(activeAnnotationSections, activeRelatedSections);
+  }
+
+  function updateRelationClasses(activeAnnotationSections: Set<HTMLElement>, activeRelatedSections: Set<HTMLElement>) {
+    root.querySelectorAll<HTMLElement>('.tiled-section.related, .tiled-section.annotation-related').forEach((section) => {
+      section.classList.toggle('annotation-related', activeAnnotationSections.has(section));
+      section.classList.toggle('related', activeRelatedSections.has(section));
+    });
+    activeAnnotationSections.forEach((section) => {
+      section.classList.add('annotation-related');
+      section.classList.remove('related');
+    });
+    activeRelatedSections.forEach((section) => {
+      if (activeAnnotationSections.has(section)) return;
+      section.classList.add('related');
+    });
   }
 
   function getSectionAnchor(nodeId, targetId = '', annotationId = '') {
@@ -135,5 +175,6 @@ export function createTiledRelationsController(options: TiledRelationsController
   return {
     animate,
     draw,
+    scheduleDraw,
   };
 }

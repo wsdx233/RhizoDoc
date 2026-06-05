@@ -6,7 +6,7 @@ type TiledNavigationControllerOptions = {
   state: any;
   getNode: (id: string) => any;
   ensureWorkspace: () => any;
-  refreshLayoutPositions: () => void;
+  refreshLayoutPositions: (options?: { animateRelations?: boolean; animateSections?: boolean; animateFocusedSection?: boolean; lockFocusedViewport?: boolean }) => void;
   runFocusedAction: (action: string) => void;
   isEditableTarget: (target: EventTarget | null) => boolean;
 };
@@ -71,8 +71,10 @@ export function createTiledNavigationController(options: TiledNavigationControll
     const nextColumn = columns.find((column) => column.pageIds.includes(nextNodeId)) || columns[columnIndex];
     workspace.focus = { workspaceId: workspace.id, region: 'columns', columnId: nextColumn.id, nodeId: nextNodeId };
     workspace.updatedAt = new Date().toISOString();
-    refreshLayoutPositions();
-    root.querySelector(`[data-node-id="${cssAttr(nextNodeId)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    refreshLayoutPositions({ animateFocusedSection: false, lockFocusedViewport: true });
+    requestAnimationFrame(() => {
+      root.querySelector(`[data-node-id="${cssAttr(nextNodeId)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    });
   }
 
   function getNearestVerticalNodeId(nodeId: string, key: string) {
@@ -101,8 +103,10 @@ export function createTiledNavigationController(options: TiledNavigationControll
     [column.pageIds[index], column.pageIds[swapIndex]] = [column.pageIds[swapIndex], column.pageIds[index]];
     workspace.focus = { workspaceId: workspace.id, region: 'columns', columnId: column.id, nodeId };
     workspace.updatedAt = new Date().toISOString();
-    refreshLayoutPositions();
-    root.querySelector(`[data-node-id="${cssAttr(nodeId)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    refreshLayoutPositions({ animateFocusedSection: false, lockFocusedViewport: true });
+    requestAnimationFrame(() => {
+      root.querySelector(`[data-node-id="${cssAttr(nodeId)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    });
   }
 
   function getPrimaryParentNodeId(nodeId: string) {

@@ -16,7 +16,7 @@ const codePlugin = createCodePlugin({ themes: ['github-dark', 'github-dark'] });
 const streamdownPlugins = { code: codePlugin, math: mathPlugin };
 const streamdownLinkSafety = { enabled: false };
 
-export function renderStreamdownIsland(container: HTMLElement, markdown: string, { streaming = true }: StreamdownRenderOptions = {}) {
+export async function renderStreamdownIsland(container: HTMLElement, markdown: string, { streaming = true }: StreamdownRenderOptions = {}) {
   let root = roots.get(container);
   if (!root) {
     container.textContent = '';
@@ -40,6 +40,14 @@ export function renderStreamdownIsland(container: HTMLElement, markdown: string,
 
   if (streaming) root.render(element);
   else flushSync(() => root.render(element));
+  await nextFrame();
+}
+
+function nextFrame() {
+  return new Promise<void>((resolve) => {
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => resolve());
+    else setTimeout(resolve, 0);
+  });
 }
 
 export function unmountStreamdownIsland(container: HTMLElement | null | undefined) {
