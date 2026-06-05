@@ -389,15 +389,12 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
 
   function handleContentAnchorsChanged(nodeId: string) {
     if (state.activeView !== 'tiled') return;
-    if (isFocusRelatedAnnotationNode(nodeId)) scheduleAnchorMaterializedRefresh();
+    if (hasAnnotationAnchors(nodeId)) scheduleAnchorMaterializedRefresh();
     else relations.scheduleDraw();
   }
 
-  function isFocusRelatedAnnotationNode(nodeId: string) {
-    const focusedId = ensureWorkspace().focus?.nodeId || '';
-    if (!focusedId) return false;
-    if (nodeId === focusedId) return true;
-    return (state.annotations || []).some((annotation) => annotation.sourceNodeId === nodeId && annotation.targetNodeId === focusedId);
+  function hasAnnotationAnchors(nodeId: string) {
+    return (state.annotations || []).some((annotation) => annotation.sourceNodeId === nodeId || annotation.targetNodeId === nodeId);
   }
 
   function scheduleAnchorMaterializedRefresh() {
@@ -506,7 +503,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     tailScroll.updateTailState(nodeId, content);
     const pageState = ensurePageState(nodeId);
     pageState.scrollTop = content.scrollTop;
-    if (ensureWorkspace().focus?.nodeId === nodeId) scheduleContentScrollLayoutRefresh();
+    if (hasAnnotationAnchors(nodeId)) scheduleContentScrollLayoutRefresh();
     else relations.scheduleDraw();
   }
 

@@ -1,6 +1,6 @@
 import type { TiledRelationCandidate } from './relation-index.js';
 
-export type TiledFocusRelationRole = 'annotation-jump' | 'active-path' | 'fanout-context' | 'background';
+export type TiledFocusRelationRole = 'annotation-jump' | 'active-path' | 'fanout-context' | 'ambient-annotation' | 'ambient-structure' | 'background';
 
 export type TiledFocusRelationPolicy = {
   role: TiledFocusRelationRole;
@@ -14,15 +14,25 @@ export function getTiledFocusRelationPolicy(
   candidate: TiledRelationCandidate,
   focusNodeId = '',
 ): TiledFocusRelationPolicy {
-  if (!focusNodeId || candidate.sourceId !== focusNodeId) return backgroundPolicy(candidate);
+  if (!focusNodeId || candidate.sourceId !== focusNodeId) return ambientPolicy(candidate);
 
   if (candidate.kind === 'annotation') {
+    const participates = candidate.annotationDirection !== 'target-to-source';
+    if (candidate.annotationAnchorKind === 'title') {
+      return {
+        role: 'annotation-jump',
+        participatesInLayout: participates,
+        active: false,
+        layoutWeight: candidate.weight + 320,
+        displacement: participates ? 'bounded' : 'none',
+      };
+    }
     return {
       role: 'annotation-jump',
-      participatesInLayout: candidate.annotationDirection !== 'target-to-source',
-      active: candidate.annotationDirection !== 'target-to-source',
+      participatesInLayout: participates,
+      active: participates,
       layoutWeight: candidate.weight + 1480,
-      displacement: candidate.annotationDirection === 'target-to-source' ? 'none' : 'exact',
+      displacement: participates ? 'exact' : 'none',
     };
   }
 
@@ -43,6 +53,30 @@ export function getTiledFocusRelationPolicy(
       active: false,
       layoutWeight: candidate.kind === 'sibling' ? candidate.weight + 120 : candidate.weight,
       displacement: 'none',
+    };
+  }
+
+  return backgroundPolicy(candidate);
+}
+
+function ambientPolicy(candidate: TiledRelationCandidate): TiledFocusRelationPolicy {
+  if (candidate.kind === 'annotation' && candidate.annotationDirection !== 'target-to-source') {
+    return {
+      role: 'ambient-annotation',
+      participatesInLayout: true,
+      active: false,
+      layoutWeight: candidate.weight * 0.46,
+      displacement: 'bounded',
+    };
+  }
+
+  if (candidate.kind === 'structural' && candidate.structuralDirection === 'child-to-parent') {
+    return {
+      role: 'ambient-structure',
+      participatesInLayout: true,
+      active: false,
+      layoutWeight: candidate.weight * 0.18,
+      displacement: 'bounded',
     };
   }
 

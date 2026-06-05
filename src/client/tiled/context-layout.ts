@@ -18,16 +18,45 @@ const TILED_ELASTIC_ANNOTATION_BASE_MAX_DISPLACEMENT = 320;
 const TILED_ELASTIC_ANNOTATION_SPAN_MIN_DISPLACEMENT = 180;
 const TILED_ELASTIC_ANNOTATION_SPAN_MAX_DISPLACEMENT = 760;
 const TILED_ELASTIC_ANNOTATION_MIN_SALIENCE = 0.012;
+const TILED_ELASTIC_ACTIVE_ANNOTATION_MIN_SALIENCE = 0.32;
 const TILED_ELASTIC_PASSES = 2;
 
-type DesiredTarget = {
+type LayoutForceRole = 'compact' | 'focus' | 'interactive' | 'annotation-base' | 'annotation-span' | 'relation';
+type RelationProposalRole = 'annotation-base' | 'annotation-span' | 'relation';
+
+type LayoutForce = {
   y: number;
   weight: number;
-  kind: 'base' | 'focus' | 'previous' | 'relation';
+  role: LayoutForceRole;
+  active?: boolean;
 };
 
-type RelationDesiredTarget = DesiredTarget & {
+type RelationProposal = {
+  desiredY: number;
+  weight: number;
+  role: RelationProposalRole;
   active: boolean;
+  candidate: TiledRelationCandidate;
+  policy: RelationLayoutPolicy;
+  definesRelationField?: boolean;
+};
+
+type RelationFieldObservation = {
+  compactY: number;
+  desiredY: number;
+  weight: number;
+  role: 'annotation-span';
+};
+
+type RelationField = {
+  offsetAt: (compactY: number) => number;
+  worldY: (compactY: number) => number;
+};
+
+type ColumnLayoutInput = {
+  layout: ElasticTiledPageLayout;
+  priorForces: LayoutForce[];
+  relationProposals: RelationProposal[];
 };
 
 type ResolvedEndpointAnchor = {
@@ -42,11 +71,12 @@ type RelationLayoutPolicy = Pick<TiledFocusRelationPolicy, 'active' | 'displacem
 };
 
 export type ElasticTiledPageLayout = TiledPageLayout & {
-  baseY: number;
+  compactY: number;
   desiredY: number;
   computedGapBefore: number;
   extraGapBefore: number;
   relationPull: number;
+  fieldOffset: number;
 };
 
 export type TiledAnchorMap = Record<string, number> | Map<string, number>;
@@ -97,23 +127,26 @@ export function computeElasticTiledLayouts(input: ComputeElasticTiledLayoutsInpu
 }
 
 function createElasticBaseLayouts(pageLayouts: TiledPageLayout[], minGap: number): ElasticTiledPageLayout[] {
+  const compactYByColumnId = new Map<string, number>();
   const orderByColumnId = new Map<string, number>();
   return pageLayouts
     .slice()
     .sort((a, b) => a.depth - b.depth || a.order - b.order)
     .map((layout) => {
       const order = orderByColumnId.get(layout.columnId) || 0;
+      const compactY = compactYByColumnId.get(layout.columnId) ?? finiteNumber(layout.y, 0);
       orderByColumnId.set(layout.columnId, order + 1);
-      const elasticBaseY = layout.y + order * minGap;
+      compactYByColumnId.set(layout.columnId, compactY + Math.max(0, layout.height) + minGap);
       return {
         ...layout,
-        y: elasticBaseY,
-        baseY: elasticBaseY,
-        desiredY: elasticBaseY,
+        y: compactY,
+        compactY,
+        desiredY: compactY,
         columnOffsetY: 0,
         computedGapBefore: order === 0 ? 0 : minGap,
         extraGapBefore: 0,
         relationPull: 0,
+        fieldOffset: 0,
       };
     });
 }
@@ -126,11 +159,14 @@ function solveColumn(
   minGap: number,
 ): ElasticTiledPageLayout[] {
   if (layouts.length === 0) return [];
-  const items = layouts.map((layout) => {
-    const desiredTargets = buildDesiredTargets(layout, snapshotByNodeId, relationIndex, input);
-    const desiredY = weightedMean(desiredTargets);
-    const totalWeight = desiredTargets.reduce((sum, target) => sum + target.weight, 0) || 1;
-    return { id: layout.nodeId, height: layout.height, desiredY, weight: totalWeight };
+  const viewportHeight = Math.max(1, finiteNumber(input.viewportHeight, 720));
+  const layoutInputs = layouts.map((layout) => buildColumnLayoutInput(layout, snapshotByNodeId, relationIndex, input, viewportHeight));
+  const relationField = solveRelationField(collectRelationFieldObservations(layoutInputs));
+  const items = layoutInputs.map((layoutInput) => {
+    const forces = resolveLayoutForces(layoutInput, relationField, viewportHeight);
+    const desiredY = weightedMean(forces);
+    const totalWeight = forces.reduce((sum, force) => sum + force.weight, 0) || 1;
+    return { id: layoutInput.layout.nodeId, height: layoutInput.layout.height, desiredY, weight: totalWeight };
   });
 
   const fitted = fitElasticStack(items, { minGap });
@@ -139,60 +175,139 @@ function solveColumn(
   return layouts.map((layout) => {
     const result = fittedByNodeId.get(layout.nodeId);
     if (!result) return layout;
-    const desiredY = desiredYByNodeId.get(layout.nodeId) ?? layout.baseY;
+    const desiredY = desiredYByNodeId.get(layout.nodeId) ?? layout.compactY;
+    const fieldOffset = relationField.offsetAt(layout.compactY);
     return {
       ...layout,
       y: result.y,
       desiredY,
       computedGapBefore: result.gapBefore,
       extraGapBefore: result.extraGapBefore,
-      relationPull: desiredY - layout.baseY,
+      relationPull: desiredY - layout.compactY,
+      fieldOffset,
     };
   });
 }
 
-function buildDesiredTargets(
+function buildColumnLayoutInput(
   layout: ElasticTiledPageLayout,
   snapshotByNodeId: Map<string, ElasticTiledPageLayout>,
   relationIndex: TiledRelationIndex,
   input: ComputeElasticTiledLayoutsInput,
-): DesiredTarget[] {
+  viewportHeight: number,
+): ColumnLayoutInput {
+  return {
+    layout,
+    priorForces: buildPriorForces(layout, input),
+    relationProposals: selectRelationProposals(collectRelationProposals(layout, snapshotByNodeId, relationIndex, input, viewportHeight)),
+  };
+}
+
+function buildPriorForces(layout: ElasticTiledPageLayout, input: ComputeElasticTiledLayoutsInput): LayoutForce[] {
   const focusNodeId = input.focusNodeId || '';
-  const targets: DesiredTarget[] = [{ y: layout.baseY, weight: TILED_ELASTIC_BASE_WEIGHT, kind: 'base' }];
-  if (layout.nodeId === focusNodeId) targets.push({ y: layout.baseY, weight: TILED_ELASTIC_FOCUS_WEIGHT, kind: 'focus' });
+  const forces: LayoutForce[] = [{ y: layout.compactY, weight: TILED_ELASTIC_BASE_WEIGHT, role: 'compact' }];
+  if (layout.nodeId === focusNodeId) forces.push({ y: layout.compactY, weight: TILED_ELASTIC_FOCUS_WEIGHT, role: 'focus' });
 
   if (input.mode === 'interactive') {
     const previousY = getAnchorValue(input.previousY, layout.nodeId);
     if (Number.isFinite(previousY)) {
-      targets.push({ y: previousY, weight: TILED_ELASTIC_INTERACTIVE_PREVIOUS_WEIGHT, kind: 'previous' });
+      forces.push({ y: previousY, weight: TILED_ELASTIC_INTERACTIVE_PREVIOUS_WEIGHT, role: 'interactive' });
     }
   }
-
-  const collectedRelationTargets = collectRelationDesiredTargets(layout, snapshotByNodeId, relationIndex, input);
-  const activeRelationTargets = collectedRelationTargets.filter((target) => target.active);
-  const relationTargets = (activeRelationTargets.length > 0 ? activeRelationTargets : collectedRelationTargets)
-    .sort((a, b) => b.weight - a.weight)
-    .slice(0, activeRelationTargets.length > 0 ? activeRelationTargets.length : TILED_ELASTIC_RELATION_TOP_K);
-  const relationWeight = relationTargets.reduce((sum, target) => sum + target.weight, 0);
-  const weightCap = activeRelationTargets.length > 0 ? TILED_ELASTIC_ACTIVE_RELATION_WEIGHT_CAP : TILED_ELASTIC_RELATION_WEIGHT_CAP;
-  const scale = relationWeight > weightCap ? weightCap / relationWeight : 1;
-  for (const target of relationTargets) {
-    targets.push({ y: target.y, weight: target.weight * scale, kind: 'relation' });
-  }
-  return targets;
+  return forces;
 }
 
-function collectRelationDesiredTargets(
+function selectRelationProposals(proposals: RelationProposal[]): RelationProposal[] {
+  const activeProposals = proposals.filter((proposal) => proposal.active);
+  const selected = (activeProposals.length > 0 ? activeProposals : proposals)
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, activeProposals.length > 0 ? activeProposals.length : TILED_ELASTIC_RELATION_TOP_K);
+  const relationWeight = selected.reduce((sum, proposal) => sum + proposal.weight, 0);
+  const weightCap = activeProposals.length > 0 ? TILED_ELASTIC_ACTIVE_RELATION_WEIGHT_CAP : TILED_ELASTIC_RELATION_WEIGHT_CAP;
+  const scale = relationWeight > weightCap ? weightCap / relationWeight : 1;
+  return selected.map((proposal) => ({ ...proposal, weight: proposal.weight * scale }));
+}
+
+function collectRelationFieldObservations(layoutInputs: ColumnLayoutInput[]): RelationFieldObservation[] {
+  return layoutInputs.flatMap(({ layout, relationProposals }) => relationProposals
+    .filter((proposal) => proposal.definesRelationField)
+    .map((proposal) => ({
+      compactY: layout.compactY,
+      desiredY: proposal.desiredY,
+      weight: proposal.weight,
+      role: 'annotation-span' as const,
+    })));
+}
+
+function solveRelationField(observations: RelationFieldObservation[]): RelationField {
+  const anchors = aggregateRelationFieldObservations(observations);
+  if (anchors.length === 0) return zeroRelationField;
+
+  return {
+    offsetAt(compactY: number) {
+      const previous = [...anchors].reverse().find((anchor) => anchor.compactY <= compactY);
+      const next = anchors.find((anchor) => anchor.compactY >= compactY);
+      if (!previous) return next?.offset || 0;
+      if (!next) return previous.offset;
+      if (previous.compactY === next.compactY) return previous.offset;
+      const t = (compactY - previous.compactY) / (next.compactY - previous.compactY);
+      return previous.offset + (next.offset - previous.offset) * t;
+    },
+    worldY(compactY: number) {
+      return compactY + this.offsetAt(compactY);
+    },
+  };
+}
+
+const zeroRelationField: RelationField = {
+  offsetAt: () => 0,
+  worldY: (compactY) => compactY,
+};
+
+function aggregateRelationFieldObservations(observations: RelationFieldObservation[]) {
+  const byCompactY = new Map<number, { compactY: number; weightedOffset: number; weight: number }>();
+  for (const observation of observations) {
+    const weight = Math.max(0, finiteNumber(observation.weight, 0));
+    if (weight <= 0) continue;
+    const offset = observation.desiredY - observation.compactY;
+    const existing = byCompactY.get(observation.compactY) || { compactY: observation.compactY, weightedOffset: 0, weight: 0 };
+    existing.weightedOffset += offset * weight;
+    existing.weight += weight;
+    byCompactY.set(observation.compactY, existing);
+  }
+  return [...byCompactY.values()]
+    .map((anchor) => ({ compactY: anchor.compactY, offset: anchor.weightedOffset / (anchor.weight || 1), weight: anchor.weight }))
+    .sort((a, b) => a.compactY - b.compactY);
+}
+
+function resolveLayoutForces(layoutInput: ColumnLayoutInput, relationField: RelationField, viewportHeight: number): LayoutForce[] {
+  const fieldBaseY = relationField.worldY(layoutInput.layout.compactY);
+  return [
+    ...layoutInput.priorForces.map((force) => force.role === 'compact' ? { ...force, y: fieldBaseY } : force),
+    ...layoutInput.relationProposals.map((proposal) => resolveRelationProposal(proposal, fieldBaseY, viewportHeight)),
+  ];
+}
+
+function resolveRelationProposal(proposal: RelationProposal, referenceY: number, viewportHeight: number): LayoutForce {
+  return {
+    y: clampDesiredY(proposal.desiredY, referenceY, proposal.candidate, proposal.policy, viewportHeight),
+    weight: proposal.weight,
+    role: proposal.role,
+    active: proposal.active,
+  };
+}
+
+function collectRelationProposals(
   layout: ElasticTiledPageLayout,
   snapshotByNodeId: Map<string, ElasticTiledPageLayout>,
   relationIndex: TiledRelationIndex,
   input: ComputeElasticTiledLayoutsInput,
-): RelationDesiredTarget[] {
+  viewportHeight: number,
+): RelationProposal[] {
   const focusNodeId = input.focusNodeId || '';
   if (layout.nodeId === focusNodeId) return [];
-  const viewportHeight = Math.max(1, finiteNumber(input.viewportHeight, 720));
   const candidates = getTiledRelationCandidates(relationIndex, layout.nodeId, focusNodeId);
-  const targets: RelationDesiredTarget[] = [];
+  const proposals: RelationProposal[] = [];
 
   for (const candidate of candidates) {
     const source = snapshotByNodeId.get(candidate.sourceId);
@@ -201,29 +316,34 @@ function collectRelationDesiredTargets(
     if (!policy.participatesInLayout) continue;
 
     if (candidate.kind === 'annotation') {
-      targets.push(...collectAnnotationRelationTargets(source, layout, candidate, policy, input.anchors, viewportHeight));
+      proposals.push(...collectAnnotationRelationProposals(source, layout, candidate, policy, input.anchors));
       continue;
     }
 
     const sourceAnchor = resolveNodeAnchor(source, input.anchors);
     const targetAnchor = resolveNodeAnchor(layout, input.anchors);
-    const desiredY = source.y + sourceAnchor.center - targetAnchor.center;
-    const clampedY = clampDesiredY(desiredY, layout.baseY, candidate, policy, viewportHeight);
-    targets.push({ y: clampedY, weight: policy.layoutWeight, kind: 'relation', active: policy.active });
+    proposals.push({
+      desiredY: source.y + sourceAnchor.center - targetAnchor.center,
+      weight: policy.layoutWeight,
+      role: 'relation',
+      active: policy.active,
+      candidate,
+      policy,
+    });
   }
 
-  return targets;
+  return proposals;
 }
 
 function clampDesiredY(
   desiredY: number,
-  baseY: number,
+  referenceY: number,
   candidate: TiledRelationCandidate,
   policy: RelationLayoutPolicy,
   viewportHeight: number,
 ): number {
   if (policy.displacement === 'exact') return desiredY;
-  if (policy.displacement === 'none') return baseY;
+  if (policy.displacement === 'none') return referenceY;
   const kindMultiplier = candidate.kind === 'annotation'
     ? 0.9
     : candidate.kind === 'structural'
@@ -231,40 +351,41 @@ function clampDesiredY(
       : 0.35;
   const activeMultiplier = policy.active ? 1.15 : 1;
   const maxDisplacement = policy.maxDisplacement ?? Math.max(240, viewportHeight * kindMultiplier * activeMultiplier);
-  return Math.min(Math.max(desiredY, baseY - maxDisplacement), baseY + maxDisplacement);
+  return Math.min(Math.max(desiredY, referenceY - maxDisplacement), referenceY + maxDisplacement);
 }
 
-function collectAnnotationRelationTargets(
+function collectAnnotationRelationProposals(
   source: ElasticTiledPageLayout,
   target: ElasticTiledPageLayout,
   candidate: TiledRelationCandidate,
   policy: TiledFocusRelationPolicy,
   anchors: TiledAnchorRegistry | undefined,
-  viewportHeight: number,
-): RelationDesiredTarget[] {
-  const targets: RelationDesiredTarget[] = [];
+): RelationProposal[] {
+  const proposals: RelationProposal[] = [];
   const sourceBaseAnchor = resolveNodeAnchor(source, anchors);
   const targetBaseAnchor = resolveNodeAnchor(target, anchors);
+  const inactiveLayoutWeight = policy.active ? candidate.weight : policy.layoutWeight;
   const basePolicy: RelationLayoutPolicy = {
     active: false,
     displacement: 'bounded',
-    layoutWeight: policy.layoutWeight * TILED_ELASTIC_ANNOTATION_BASE_WEIGHT_MULTIPLIER,
+    layoutWeight: inactiveLayoutWeight * TILED_ELASTIC_ANNOTATION_BASE_WEIGHT_MULTIPLIER,
     maxDisplacement: TILED_ELASTIC_ANNOTATION_BASE_MAX_DISPLACEMENT,
   };
-  const baseDesiredY = source.y + sourceBaseAnchor.center - targetBaseAnchor.center;
-  targets.push({
-    y: clampDesiredY(baseDesiredY, target.baseY, candidate, basePolicy, viewportHeight),
+  proposals.push({
+    desiredY: source.y + sourceBaseAnchor.center - targetBaseAnchor.center,
     weight: basePolicy.layoutWeight,
-    kind: 'relation',
+    role: 'annotation-base',
     active: false,
+    candidate,
+    policy: basePolicy,
   });
 
   const annotationAnchor = getEndpointAnnotationAnchor(source, candidate, anchors)
     ?? getEndpointAnnotationAnchor(target, candidate, anchors);
-  if (!annotationAnchor) return targets;
+  if (!annotationAnchor) return proposals;
 
   const salience = getAnnotationAnchorSalience(annotationAnchor);
-  if (salience <= TILED_ELASTIC_ANNOTATION_MIN_SALIENCE) return targets;
+  if (salience <= TILED_ELASTIC_ANNOTATION_MIN_SALIENCE) return proposals;
 
   const sourceSpanAnchor = annotationAnchor.nodeId === source.nodeId
     ? anchorFromLayoutAnchor(source, annotationAnchor)
@@ -272,20 +393,26 @@ function collectAnnotationRelationTargets(
   const targetSpanAnchor = annotationAnchor.nodeId === target.nodeId
     ? anchorFromLayoutAnchor(target, annotationAnchor)
     : targetBaseAnchor;
+  const definesRelationField = candidate.annotationAnchorKind !== 'title'
+    && annotationAnchor.visibility === 'visible'
+    && salience >= TILED_ELASTIC_ACTIVE_ANNOTATION_MIN_SALIENCE;
+  const spanActive = policy.active && definesRelationField;
   const spanPolicy: RelationLayoutPolicy = {
-    active: false,
-    displacement: 'bounded',
-    layoutWeight: policy.layoutWeight * TILED_ELASTIC_ANNOTATION_SPAN_WEIGHT_MULTIPLIER * salience,
-    maxDisplacement: lerp(TILED_ELASTIC_ANNOTATION_SPAN_MIN_DISPLACEMENT, TILED_ELASTIC_ANNOTATION_SPAN_MAX_DISPLACEMENT, salience),
+    active: spanActive,
+    displacement: spanActive ? policy.displacement : 'bounded',
+    layoutWeight: (spanActive ? policy.layoutWeight : inactiveLayoutWeight) * TILED_ELASTIC_ANNOTATION_SPAN_WEIGHT_MULTIPLIER * salience,
+    maxDisplacement: spanActive ? undefined : lerp(TILED_ELASTIC_ANNOTATION_SPAN_MIN_DISPLACEMENT, TILED_ELASTIC_ANNOTATION_SPAN_MAX_DISPLACEMENT, salience),
   };
-  const spanDesiredY = source.y + sourceSpanAnchor.center - targetSpanAnchor.center;
-  targets.push({
-    y: clampDesiredY(spanDesiredY, target.baseY, candidate, spanPolicy, viewportHeight),
+  proposals.push({
+    desiredY: source.y + sourceSpanAnchor.center - targetSpanAnchor.center,
     weight: spanPolicy.layoutWeight,
-    kind: 'relation',
-    active: false,
+    role: 'annotation-span',
+    active: spanPolicy.active,
+    candidate,
+    policy: spanPolicy,
+    definesRelationField,
   });
-  return targets;
+  return proposals;
 }
 
 function resolveNodeAnchor(layout: ElasticTiledPageLayout, anchors: TiledAnchorRegistry | undefined): ResolvedEndpointAnchor {
@@ -329,7 +456,7 @@ function clampAnchor(value: unknown, height: number): number {
   return Math.min(Math.max(anchor, 0), height);
 }
 
-function weightedMean(targets: DesiredTarget[]): number {
+function weightedMean(targets: { y: number; weight: number }[]): number {
   const totalWeight = targets.reduce((sum, target) => sum + target.weight, 0) || 1;
   return targets.reduce((sum, target) => sum + target.y * target.weight, 0) / totalWeight;
 }

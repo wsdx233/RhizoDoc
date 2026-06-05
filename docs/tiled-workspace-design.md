@@ -4,7 +4,7 @@
 
 The second RhizoDoc frontend is a **tiled relation field** over the same document graph. It borrows part of the feel of a tiling window manager: every depth column has a deterministic stack order, and keyboard operations can move focus or swap neighboring panels. Unlike a strict tiling manager, stacks are **elastic**: adjacent panels may have automatically computed whitespace between them when relation-aware layout needs room to align meaningful context.
 
-The infinite canvas remains the free spatial map. The tiled relation field is the dense reading/synthesis view: horizontal position is graph depth, vertical order is a stack inside each depth, and the current focus plus graph/annotation relations can produce automatic vertical spacing so related panels appear near the reading context.
+The infinite canvas remains the free spatial map. The tiled relation field is the dense reading/synthesis view: horizontal position is graph depth, vertical order is a stack inside each depth, and graph/annotation relations can produce automatic vertical spacing so related panels appear near meaningful reading contexts. Focus raises the gain for the current reading path, but it is not the only source of force: ambient annotation and selected structural relations still participate with bounded lower weight.
 
 > Graph depth decides columns. Tiling order decides each column. Focus context and relations decide automatic elastic spacing. Users do not author explicit gaps.
 
@@ -32,8 +32,9 @@ The infinite canvas remains the free spatial map. The tiled relation field is th
    - Previous rendered positions are only temporary interactive smoothing input; they are not canonical layout state.
    - There is no manual gap state to maintain.
 
-4. **Focus context optimizes what is nearby**
+4. **Relation field is global; focus is gain, not existence**
    - When reading the focused node, neighboring columns should automatically put likely useful nodes near the focused panel.
+   - Non-focused annotation relations also participate as ambient lower-weight forces, so the field remains a graph-wide relation field rather than a single-node magnetic halo.
    - Strong candidates include parent, children, annotation source/target, and later semantic matches.
    - Annotation relations should have stronger pull than ordinary structural edges because they point to exact text spans.
 
@@ -140,14 +141,16 @@ minimize Σ weight[i] * (y[i] - desiredY[i])²
 
 where `desiredY` is a weighted combination of:
 
-- compact-stack position;
+- warped compact-stack position (`compactY + relationFieldOffset`), not an absolute per-panel home position;
 - relation alignment targets from the current relaxation snapshot;
 - focus-context boosts for the active panel and its strongest relations;
 - previous solved position only during explicit interactive smoothing, not canonical layout.
 
 This is reduced to weighted isotonic regression by subtracting cumulative panel heights and minimum gaps, then solved with Pool Adjacent Violators Algorithm (PAVA). The automatic whitespace between panels is the residual separation produced by this constrained fit.
 
-The result should be recomputed when focus, order, panel display/height, graph relations, or annotations change. Ordinary scrolling should redraw relation paths but should not continuously re-solve elastic gaps, because that would make the reading field feel unstable. Relation pulls are clamped and saturated so weak relations cannot accumulate into large empty fields.
+The result should be recomputed when focus, order, panel display/height, graph relations, or annotations change. Ordinary scrolling should redraw relation paths but should not continuously re-solve elastic gaps, because that would make the reading field feel unstable. Relation pulls are clamped and saturated so weak relations cannot accumulate into large empty fields. The compact stack is a shape prior, not an absolute `baseY` anchor for every panel; when visible semantic anchors define a local relation field, layout forces are resolved against that field so the ordered stack remains compact instead of leaving large holes.
+
+The relation field is modeled in three explicit phases. First, visible/high-salience annotation spans produce `RelationFieldObservation`s. Second, those observations solve a per-column `RelationField` over compact stack coordinates; interpolation is by compact geometry, not ordinal index. Third, layout forces are built in world coordinates: the compact prior is warped through the field, weak annotation-base forces are clamped around the field-local baseline, visible span anchors remain high-confidence forces, and offscreen span refinements remain bounded residual cues. This avoids ad-hoc compatibility flags and keeps weak annotation existence relations from reopening holes created by stale compact-stack coordinates.
 
 ### Anchor model
 
@@ -155,10 +158,12 @@ Elastic relation targets align **semantic anchors**, not just panel boxes.
 
 Anchor priority:
 
-1. Exact active annotation span when present, measurable, and visible in the source content viewport.
-2. Focused panel's currently visible Markdown/content interval.
-3. Focused panel's visible panel interval.
+1. Annotation span salience snapshot when present and measurable in its source content coordinates.
+2. The source panel's currently visible Markdown/content interval.
+3. The source panel's visible panel interval.
 4. Panel center fallback.
+
+Anchor measurement should cover all rendered annotation sources, not only annotations adjacent to the focused node, because ambient annotation relations are part of the relation field.
 
 This distinction matters for long panels: parent/context alignment should follow what the reader is currently seeing inside the focused panel, not the full card's center. Annotation relations should align to the highlighted source span when available.
 
@@ -167,7 +172,9 @@ Visibility is part of the annotation-span anchor contract:
 - `visible`: the semantic span is actually visible and may be used as a precise span-level layout anchor.
 - `above-viewport` / `below-viewport`: the span exists but is outside the current reading viewport. Its clamped top/bottom position is an offscreen cue anchor, not a real visible span anchor.
 
-An annotation relation is split into two layout forces. The base relation is a stable low-weight node-level force that keeps related panels in the source panel's field even when the precise mark is not measurable. The span refinement is a salience-weighted force based on the mark's content-coordinate distance from the current reading lens center. Visible center marks get high salience, edge marks get less, near-offscreen marks decay continuously, and far-offscreen marks contribute almost no span-level pull. Offscreen marks may still use top/bottom cue positions, but their effect comes from salience rather than a hard visible/offscreen mode switch. This preserves source/target direction without letting hidden spans pretend to be visible exact anchors or snapping lower/upper relations back to the node center.
+An annotation relation is split into two layout forces. The base relation is a stable low-weight node-level force that keeps related panels in the source panel's field even when the precise mark is not measurable. The span refinement is a salience-weighted force based on the mark's content-coordinate distance from the current reading lens center. Visible center marks get high salience, edge marks get less, near-offscreen marks decay continuously, and far-offscreen marks contribute almost no span-level pull. Offscreen marks may still use top/bottom cue positions, but their effect comes from salience rather than a hard visible/offscreen mode switch. Active focus gain belongs only to visible/high-salience span refinement; base and non-active/offscreen span forces must stay low-weight so hidden annotations do not compete with the current reading lens. This preserves source/target direction without letting hidden spans pretend to be visible exact anchors or snapping lower/upper relations back to the node center.
+
+A directly generated child without a text annotation is treated as a title-anchor annotation: the source anchor is the parent's tiled title/header rather than a mark in the Markdown body. This keeps generated-child layout in the same annotation relation pipeline without introducing a separate generation-force abstraction. Title-anchor annotations are bounded context pulls rather than exact active jumps, because one parent may directly generate multiple children.
 
 ## Focus Lens
 
@@ -176,9 +183,11 @@ Raw graph and annotation relations are first interpreted by a focus lens before 
 - `annotation-jump`: an active annotation relation that may exactly align semantic anchors.
 - `active-path`: the focused structural path, for example focused child → parent/context.
 - `fanout-context`: high fan-out structural context that should not pull every child at once.
+- `ambient-annotation`: non-focused forward annotation relations that affect layout with bounded lower weight.
+- `ambient-structure`: selected non-focused structural path relations, currently child → parent, that affect layout weakly without collapsing fan-out.
 - `background`: relation data that remains available for navigation/search but does not affect current layout.
 
-The layout solver consumes lens policies rather than deciding relation semantics itself. This keeps PAVA layout math separate from product choices about browsing intent, visual clutter, and high fan-out behavior.
+The layout solver consumes lens policies rather than deciding relation semantics itself. This keeps PAVA layout math separate from product choices about browsing intent, visual clutter, and high fan-out behavior. Active reading-lens relations should be expressed as high-confidence desired positions on their target panels; the ordered-stack PAVA constraints then naturally propagate only the necessary prefix/suffix movement to preserve non-overlap. Do not add a separate whole-column or segment-flow force unless it is explicitly budgeted, because duplicate propagation can drag unrelated panels and create large gaps.
 
 ## Relationship Tension
 

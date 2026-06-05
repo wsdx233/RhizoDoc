@@ -1,6 +1,7 @@
-import type { RhizoAnnotation, TiledPageLayout } from '../../shared/types.js';
+import type { RhizoAnnotation, RhizoNode, TiledPageLayout } from '../../shared/types.js';
 import { clamp, cssAttr } from '../utils.js';
 import { computeAnnotationSalience, type AnnotationSalienceSide } from './annotation-salience.js';
+import { getTiledTitleAnchorId } from './relation-index.js';
 
 export type TiledAnchorKind = 'visible-content' | 'annotation-span' | 'visible-panel';
 export type TiledAnchorVisibility = 'visible' | 'above-viewport' | 'below-viewport';
@@ -34,24 +35,40 @@ type MeasureTiledAnchorsOptions = {
   root: HTMLElement;
   focusNodeId?: string;
   focusedLayout?: TiledPageLayout | null;
+  layouts?: TiledPageLayout[];
   annotations?: RhizoAnnotation[];
+  nodes?: RhizoNode[];
 };
 
 export function measureTiledAnchors(options: MeasureTiledAnchorsOptions): TiledAnchorRegistry | undefined {
   const registry: TiledAnchorRegistry = { focusNodeId: options.focusNodeId || undefined, nodeAnchors: {}, annotationAnchors: {} };
   const focusNodeId = options.focusNodeId || '';
-  if (focusNodeId && options.focusedLayout) {
-    const section = findTiledSection(options.root, focusNodeId);
+  const layouts = options.layouts?.length
+    ? options.layouts
+    : focusNodeId && options.focusedLayout
+      ? [options.focusedLayout]
+      : [];
+  for (const layout of layouts) {
+    const section = findTiledSection(options.root, layout.nodeId);
     const anchor = section
-      ? measureVisibleContentAnchor(options.root, section, options.focusedLayout.height)
-        ?? measureVisiblePanelAnchor(options.root, section, options.focusedLayout.height)
+      ? measureVisibleContentAnchor(options.root, section, layout.height)
+        ?? measureVisiblePanelAnchor(options.root, section, layout.height)
       : undefined;
-    if (anchor) registry.nodeAnchors[focusNodeId] = anchor;
+    if (anchor) registry.nodeAnchors[layout.nodeId] = anchor;
   }
 
   for (const annotation of options.annotations || []) {
     const anchor = measureAnnotationAnchor(options.root, annotation);
     if (anchor) registry.annotationAnchors[annotation.id] = anchor;
+  }
+
+  const nodesById = new Map((options.nodes || []).map((node) => [node.id, node]));
+  for (const node of options.nodes || []) {
+    const parentId = typeof node.parentId === 'string' ? node.parentId : '';
+    if (!node.generated || !parentId || !nodesById.has(parentId)) continue;
+    const anchorId = getTiledTitleAnchorId(parentId, node.id);
+    const anchor = measureTitleAnchor(options.root, parentId, node.id);
+    if (anchor) registry.annotationAnchors[anchorId] = anchor;
   }
 
   return Object.keys(registry.nodeAnchors).length || Object.keys(registry.annotationAnchors).length ? registry : undefined;
@@ -66,6 +83,19 @@ function measureVisibleContentAnchor(_root: HTMLElement, section: HTMLElement, f
   if (!content || content.clientHeight <= 1) return null;
   const contentTop = getElementTopInSection(content, section);
   return createAnchorFromSectionInterval(section, 'visible-content', contentTop, contentTop + content.clientHeight, fallbackHeight);
+}
+
+function measureTitleAnchor(root: HTMLElement, sourceNodeId: string, targetNodeId: string): TiledLayoutAnchor | null {
+  const section = findTiledSection(root, sourceNodeId);
+  if (!section) return null;
+  const header = section.querySelector('.tiled-section-header') as HTMLElement | null;
+  if (!header) return null;
+  const top = getElementTopInSection(header, section);
+  const bottom = top + (header.offsetHeight || 1);
+  return createAnchorFromSectionInterval(section, 'annotation-span', top, bottom, section.offsetHeight || 0, undefined, 'visible', undefined, undefined, undefined, undefined, undefined, undefined, {
+    annotationId: getTiledTitleAnchorId(sourceNodeId, targetNodeId),
+    targetNodeId,
+  });
 }
 
 function measureVisiblePanelAnchor(_root: HTMLElement, section: HTMLElement, fallbackHeight: number): TiledLayoutAnchor | null {
@@ -154,6 +184,7 @@ function createAnchorFromSectionInterval(
   contentBottom?: number,
   visibleTop?: number,
   visibleBottom?: number,
+  synthetic?: { annotationId?: string; targetNodeId?: string },
 ): TiledLayoutAnchor {
   const height = section.offsetHeight || fallbackHeight || 1;
   const top = clamp(sectionTop, 0, height);
@@ -174,8 +205,8 @@ function createAnchorFromSectionInterval(
     contentBottom,
     visibleTop,
     visibleBottom,
-    annotationId: annotation?.id,
-    targetNodeId: annotation?.targetNodeId,
+    annotationId: annotation?.id || synthetic?.annotationId,
+    targetNodeId: annotation?.targetNodeId || synthetic?.targetNodeId,
   };
 }
 

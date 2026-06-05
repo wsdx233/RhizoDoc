@@ -47,10 +47,10 @@ export function resolveTiledLayoutTransaction(request: TiledLayoutRefreshRequest
       return transaction(reason, 'semantic', 'animate', 'track-transition', 'none');
 
     case 'focus-keyboard-vertical':
-      return transaction(reason, 'semantic', 'stable', 'track-transition', 'none');
+      return transaction(reason, 'semantic', 'animate', 'track-transition', 'none');
 
     case 'annotation-click':
-      return transaction(reason, 'semantic', 'stable', 'track-transition', 'none');
+      return transaction(reason, 'semantic', 'animate', 'track-transition', 'none');
 
     case 'panel-action':
     case 'column-action':

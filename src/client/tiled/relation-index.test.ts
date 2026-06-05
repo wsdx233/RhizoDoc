@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { RhizoAnnotation, RhizoEdge, RhizoNode } from '../../shared/types.js';
 import { buildTiledRelationIndex, getTiledRelationCandidates } from './relation-index.js';
 
-function node(id: string, parentId: string | null = null): RhizoNode {
+function node(id: string, parentId: string | null = null, generated = false): RhizoNode {
   return {
     id,
     parentId,
@@ -13,7 +13,7 @@ function node(id: string, parentId: string | null = null): RhizoNode {
     width: 340,
     height: 0,
     collapsed: false,
-    generated: false,
+    generated,
     loading: false,
     direction: 'right',
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -39,6 +39,23 @@ describe('tiled relation index', () => {
     expect(getTiledRelationCandidates(index, 'b').map((candidate) => candidate.kind)).toContain('annotation');
     expect(getTiledRelationCandidates(index, 'b').map((candidate) => candidate.kind)).toContain('structural');
     expect(getTiledRelationCandidates(index, 'b', 'a').map((candidate) => candidate.kind)).toContain('sibling');
+  });
+
+  it('indexes directly generated children as title-anchor annotation candidates', () => {
+    const index = buildTiledRelationIndex(
+      [node('parent'), node('child', 'parent', true)],
+      [],
+      [],
+    );
+
+    const candidates = getTiledRelationCandidates(index, 'child', 'parent');
+    expect(candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'annotation',
+        annotationId: 'title-anchor:parent:child',
+        annotationAnchorKind: 'title',
+      }),
+    ]));
   });
 
   it('ignores relations that reference missing nodes', () => {

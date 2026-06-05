@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { RhizoAnnotation, RhizoEdge, RhizoNode, TiledColumn, TiledPageLayout } from '../../shared/types.js';
 import { computeElasticTiledLayouts } from './context-layout.js';
 
-function node(id: string, parentId: string | null = null): RhizoNode {
+function node(id: string, parentId: string | null = null, generated = false): RhizoNode {
   return {
     id,
     parentId,
@@ -13,7 +13,7 @@ function node(id: string, parentId: string | null = null): RhizoNode {
     width: 340,
     height: 0,
     collapsed: false,
-    generated: false,
+    generated,
     loading: false,
     direction: 'right',
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -79,7 +79,7 @@ function anchorRegistry({ node = {}, annotations = {} }: { node?: Record<string,
 }
 
 describe('computeElasticTiledLayouts', () => {
-  it('keeps fixed order and prevents overlap while creating automatic active-context gaps', () => {
+  it('keeps fixed order and compactness while relation field translates the stack', () => {
     const nodes = [node('source'), node('a'), node('b')];
     const columns = [column('depth-0', 0, ['source']), column('depth-1', 1, ['a', 'b'])];
     const pageLayouts = {
@@ -104,8 +104,8 @@ describe('computeElasticTiledLayouts', () => {
 
     expect(byId.get('a')!.y).toBeLessThan(byId.get('b')!.y);
     expect(byId.get('b')!.y - byId.get('a')!.y).toBeGreaterThanOrEqual(114 - 1e-6);
-    expect(byId.get('b')!.y).toBeGreaterThan(byId.get('b')!.baseY);
-    expect(byId.get('b')!.extraGapBefore).toBeGreaterThan(0);
+    expect(byId.get('b')!.y).toBeGreaterThan(byId.get('b')!.compactY);
+    expect(byId.get('b')!.extraGapBefore).toBeCloseTo(0);
   });
 
   it('uses a weaker bounded cue when an annotation span is below the viewport', () => {
@@ -161,7 +161,7 @@ describe('computeElasticTiledLayouts', () => {
     const target = result.find((item) => item.nodeId === 'target')!;
     expect(target.y).toBeGreaterThan(330);
     expect(target.y).toBeLessThan(430);
-    expect(target.y).toBeLessThan(target.baseY);
+    expect(target.y).toBeLessThan(target.compactY);
   });
 
   it('allows nearest offscreen cues to coexist with visible span anchors', () => {
@@ -222,7 +222,7 @@ describe('computeElasticTiledLayouts', () => {
     });
     const byId = new Map(result.map((item) => [item.nodeId, item]));
 
-    expect(byId.get('far')!.relationPull).toBeGreaterThan(200);
+    expect(byId.get('far')!.relationPull).toBeGreaterThan(180);
     expect(byId.get('far')!.relationPull).toBeLessThan(byId.get('near')!.relationPull);
     expect(byId.get('near')!.y).toBeGreaterThan(500);
   });
@@ -253,7 +253,7 @@ describe('computeElasticTiledLayouts', () => {
     });
     const byId = new Map(result.map((item) => [item.nodeId, item]));
 
-    expect(byId.get('far')!.y).toBeGreaterThan(byId.get('far')!.baseY + 80);
+    expect(byId.get('far')!.y).toBeGreaterThan(byId.get('far')!.compactY + 80);
     expect(byId.get('far')!.y).toBeLessThan(byId.get('near')!.y);
     expect(byId.get('far')!.relationPull).toBeLessThan(180);
   });
@@ -340,6 +340,230 @@ describe('computeElasticTiledLayouts', () => {
     expect(byId.get('right')!.y).toBeGreaterThan(52);
   });
 
+  it('translates unanchored stack segments with the relation field instead of preserving empty holes', () => {
+    const targetIds = ['top-a', 'active-target', 'middle-c', 'unrelated-lower'];
+    const nodes = [node('source'), ...targetIds.map((id) => node(id))];
+    const columns = [column('depth-0', 0, ['source']), column('depth-1', 1, targetIds)];
+    const pageLayouts: Record<string, TiledPageLayout> = {
+      source: layout('source', 'depth-0', 0, 0, 60, 300),
+    };
+    targetIds.forEach((id, index) => {
+      pageLayouts[id] = layout(id, 'depth-1', 1, index, 20 + index * 320, 260);
+    });
+
+    const result = computeElasticTiledLayouts({
+      columns,
+      pageLayouts,
+      nodes,
+      edges: [],
+      annotations: [annotation('source-active', 'source', 'active-target')],
+      focusNodeId: 'source',
+      viewportHeight: 720,
+      anchors: anchorRegistry({
+        node: { source: 60 },
+        annotations: { 'source-active': { nodeId: 'source', center: 60, targetNodeId: 'active-target' } },
+      }),
+    });
+    const byId = new Map(result.map((item) => [item.nodeId, item]));
+
+    expect(byId.get('active-target')!.y).toBeLessThan(byId.get('active-target')!.compactY - 180);
+    expect(byId.get('unrelated-lower')!.y).toBeLessThan(byId.get('unrelated-lower')!.compactY - 200);
+    expect(byId.get('unrelated-lower')!.y - byId.get('middle-c')!.y - byId.get('middle-c')!.height).toBeLessThan(120);
+  });
+
+  it('keeps weak non-current annotation relations inside the visible relation field instead of reopening holes', () => {
+    const targetIds = ['other-language', 'gpu-architecture', 'atomic-primitives', 'memory-barrier', 'jmm'];
+    const nodes = [node('source'), ...targetIds.map((id) => node(id))];
+    const columns = [column('depth-1', 1, ['source']), column('depth-2', 2, targetIds)];
+    const pageLayouts: Record<string, TiledPageLayout> = {
+      source: layout('source', 'depth-1', 1, 0, 52, 517.75),
+      'other-language': layout('other-language', 'depth-2', 2, 0, 52, 360),
+      'gpu-architecture': layout('gpu-architecture', 'depth-2', 2, 1, 412, 360),
+      'atomic-primitives': layout('atomic-primitives', 'depth-2', 2, 2, 772, 583.75),
+      'memory-barrier': layout('memory-barrier', 'depth-2', 2, 3, 1355.75, 360),
+      jmm: layout('jmm', 'depth-2', 2, 4, 1715.75, 360),
+    };
+
+    const result = computeElasticTiledLayouts({
+      columns,
+      pageLayouts,
+      nodes,
+      edges: [],
+      annotations: [
+        annotation('source-gpu', 'source', 'gpu-architecture'),
+        annotation('source-atomic', 'source', 'atomic-primitives'),
+        annotation('source-barrier', 'source', 'memory-barrier'),
+        annotation('source-jmm', 'source', 'jmm'),
+      ],
+      focusNodeId: 'source',
+      viewportHeight: 720,
+      anchors: anchorRegistry({
+        node: { source: 258 },
+        annotations: {
+          'source-atomic': { nodeId: 'source', center: 230, targetNodeId: 'atomic-primitives' },
+          'source-barrier': { nodeId: 'source', center: 260, targetNodeId: 'memory-barrier' },
+        },
+      }),
+    });
+    const byId = new Map(result.map((item) => [item.nodeId, item]));
+    const barrier = byId.get('memory-barrier')!;
+    const jmm = byId.get('jmm')!;
+    const gapBeforeJmm = jmm.y - barrier.y - barrier.height;
+
+    expect(barrier.y).toBeGreaterThan(byId.get('atomic-primitives')!.y);
+    expect(gapBeforeJmm).toBeLessThan(80);
+  });
+
+  it('interpolates relation fields by compact geometry instead of ordinal index', () => {
+    const nodes = [node('source'), node('top'), node('middle'), node('bottom')];
+    const columns = [column('depth-0', 0, ['source']), column('depth-1', 1, ['top', 'middle', 'bottom'])];
+    const pageLayouts = {
+      source: layout('source', 'depth-0', 0, 0, 0, 1400),
+      top: layout('top', 'depth-1', 1, 0, 0, 100),
+      middle: layout('middle', 'depth-1', 1, 1, 100, 500),
+      bottom: layout('bottom', 'depth-1', 1, 2, 600, 100),
+    };
+
+    const result = computeElasticTiledLayouts({
+      columns,
+      pageLayouts,
+      nodes,
+      edges: [],
+      annotations: [annotation('source-top', 'source', 'top'), annotation('source-bottom', 'source', 'bottom')],
+      focusNodeId: 'source',
+      viewportHeight: 720,
+      anchors: anchorRegistry({
+        annotations: {
+          'source-top': { nodeId: 'source', center: 50, targetNodeId: 'top' },
+          'source-bottom': { nodeId: 'source', center: 1278, targetNodeId: 'bottom' },
+        },
+      }),
+    });
+    const byId = new Map(result.map((item) => [item.nodeId, item]));
+    const top = byId.get('top')!;
+    const middle = byId.get('middle')!;
+    const bottom = byId.get('bottom')!;
+    const expectedMiddleOffset = bottom.fieldOffset * ((middle.compactY - top.compactY) / (bottom.compactY - top.compactY));
+
+    expect(middle.fieldOffset).toBeCloseTo(expectedMiddleOffset, 3);
+    expect(middle.fieldOffset).toBeLessThan(bottom.fieldOffset / 2);
+  });
+
+  it('preserves a lower panel gap when that panel has its own visible semantic anchor', () => {
+    const nodes = [node('source'), node('upper'), node('lower')];
+    const columns = [column('depth-0', 0, ['source']), column('depth-1', 1, ['upper', 'lower'])];
+    const pageLayouts = {
+      source: layout('source', 'depth-0', 0, 0, 0, 900),
+      upper: layout('upper', 'depth-1', 1, 0, 0, 100),
+      lower: layout('lower', 'depth-1', 1, 1, 100, 100),
+    };
+
+    const result = computeElasticTiledLayouts({
+      columns,
+      pageLayouts,
+      nodes,
+      edges: [],
+      annotations: [annotation('source-upper', 'source', 'upper'), annotation('source-lower', 'source', 'lower')],
+      focusNodeId: 'source',
+      viewportHeight: 720,
+      anchors: anchorRegistry({
+        annotations: {
+          'source-upper': { nodeId: 'source', center: 50, targetNodeId: 'upper' },
+          'source-lower': { nodeId: 'source', center: 764, targetNodeId: 'lower' },
+        },
+      }),
+    });
+    const byId = new Map(result.map((item) => [item.nodeId, item]));
+    const upper = byId.get('upper')!;
+    const lower = byId.get('lower')!;
+    const gapBeforeLower = lower.y - upper.y - upper.height;
+
+    expect(gapBeforeLower).toBeGreaterThan(300);
+    expect(lower.fieldOffset).toBeGreaterThan(500);
+  });
+
+  it('lets active visible annotations pull a deep ordered-stack target into the current reading lens', () => {
+    const targetIds = ['other-a', 'other-b', 'other-c', 'other-d', 'jmm'];
+    const nodes = [node('source'), ...targetIds.map((id) => node(id))];
+    const columns = [column('depth-0', 0, ['source']), column('depth-1', 1, targetIds)];
+    const pageLayouts: Record<string, TiledPageLayout> = {
+      source: layout('source', 'depth-0', 0, 0, 250, 400),
+    };
+    targetIds.forEach((id, index) => {
+      pageLayouts[id] = layout(id, 'depth-1', 1, index, 20 + index * 300, 260);
+    });
+
+    const result = computeElasticTiledLayouts({
+      columns,
+      pageLayouts,
+      nodes,
+      edges: [],
+      annotations: [annotation('source-jmm', 'source', 'jmm')],
+      focusNodeId: 'source',
+      viewportHeight: 720,
+      anchors: anchorRegistry({
+        node: { source: 170 },
+        annotations: { 'source-jmm': { nodeId: 'source', center: 170, targetNodeId: 'jmm' } },
+      }),
+    });
+    const byId = new Map(result.map((item) => [item.nodeId, item]));
+
+    expect(byId.get('jmm')!.y).toBeLessThan(430);
+    expect(byId.get('jmm')!.y).toBeGreaterThan(260);
+    expect(byId.get('jmm')!.y).toBeLessThan(byId.get('jmm')!.compactY - 800);
+    expect(byId.get('other-d')!.y).toBeLessThan(byId.get('jmm')!.y);
+    expect(byId.get('jmm')!.y - byId.get('other-d')!.y).toBeLessThan(320);
+  });
+
+  it('treats directly generated children as title-anchor annotation relations', () => {
+    const nodes = [node('parent'), node('generated-child', 'parent', true)];
+    const columns = [column('depth-0', 0, ['parent']), column('depth-1', 1, ['generated-child'])];
+    const pageLayouts = {
+      parent: layout('parent', 'depth-0', 0, 0, 420, 260),
+      'generated-child': layout('generated-child', 'depth-1', 1, 0, 52, 180),
+    };
+
+    const result = computeElasticTiledLayouts({
+      columns,
+      pageLayouts,
+      nodes,
+      edges: [],
+      annotations: [],
+      focusNodeId: 'parent',
+      viewportHeight: 720,
+      anchors: anchorRegistry({
+        annotations: { 'title-anchor:parent:generated-child': { nodeId: 'parent', center: 24, targetNodeId: 'generated-child' } },
+      }),
+    });
+
+    expect(result.find((item) => item.nodeId === 'generated-child')!.y).toBeGreaterThan(180);
+  });
+
+  it('lets non-focused annotation relations exert ambient layout force', () => {
+    const nodes = [node('focus'), node('ambient-source'), node('target')];
+    const columns = [column('depth-0', 0, ['focus', 'ambient-source']), column('depth-1', 1, ['target'])];
+    const pageLayouts = {
+      focus: layout('focus', 'depth-0', 0, 0, 52),
+      'ambient-source': layout('ambient-source', 'depth-0', 0, 1, 420, 240),
+      target: layout('target', 'depth-1', 1, 0, 52),
+    };
+
+    const result = computeElasticTiledLayouts({
+      columns,
+      pageLayouts,
+      nodes,
+      edges: [],
+      annotations: [annotation('ambient-target', 'ambient-source', 'target')],
+      focusNodeId: 'focus',
+      viewportHeight: 720,
+      anchors: anchorRegistry({
+        annotations: { 'ambient-target': { nodeId: 'ambient-source', center: 180, targetNodeId: 'target' } },
+      }),
+    });
+
+    expect(result.find((item) => item.nodeId === 'target')!.y).toBeGreaterThan(260);
+  });
+
   it('ignores previous rendered positions in canonical mode but uses them in interactive mode', () => {
     const nodes = [node('a')];
     const columns = [column('depth-0', 0, ['a'])];
@@ -372,7 +596,7 @@ describe('computeElasticTiledLayouts', () => {
     const nodes = [node('ann'), node('struct'), node('target')];
     const columns = [column('depth-0', 0, ['struct', 'ann']), column('depth-1', 1, ['target'])];
     const pageLayouts = {
-      struct: layout('struct', 'depth-0', 0, 0, 0),
+      struct: layout('struct', 'depth-0', 0, 0, 0, 486),
       ann: layout('ann', 'depth-0', 0, 1, 500),
       target: layout('target', 'depth-1', 1, 0, 100),
     };
@@ -417,7 +641,7 @@ describe('computeElasticTiledLayouts', () => {
     const byId = new Map(result.map((item) => [item.nodeId, item]));
 
     expect(Math.abs(byId.get('parent')!.y - byId.get('child-29')!.y)).toBeLessThan(60);
-    expect(byId.get('child-29')!.y).toBeCloseTo(byId.get('child-29')!.baseY);
+    expect(byId.get('child-29')!.y).toBeCloseTo(byId.get('child-29')!.compactY);
   });
 
   it('does not collapse a many-child column toward a focused parent', () => {
@@ -443,7 +667,7 @@ describe('computeElasticTiledLayouts', () => {
     });
     const byId = new Map(result.map((item) => [item.nodeId, item]));
 
-    expect(byId.get('parent')!.y).toBeCloseTo(byId.get('parent')!.baseY);
-    expect(byId.get('child-29')!.y).toBeCloseTo(byId.get('child-29')!.baseY);
+    expect(byId.get('parent')!.y).toBeCloseTo(byId.get('parent')!.compactY);
+    expect(byId.get('child-29')!.y).toBeCloseTo(byId.get('child-29')!.compactY);
   });
 });

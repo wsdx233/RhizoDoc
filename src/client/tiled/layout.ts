@@ -36,19 +36,14 @@ export function createTiledLayoutController(options: TiledLayoutControllerOption
 
   function getAnchors(projection, workspace) {
     const focusedId = workspace.focus?.nodeId || '';
-    const focusedLayout = focusedId ? projection.pageLayouts[focusedId] : null;
     return measureTiledAnchors({
       root,
       focusNodeId: focusedId,
-      focusedLayout,
-      annotations: getFocusRelatedAnnotations(focusedId),
+      focusedLayout: focusedId ? projection.pageLayouts[focusedId] : null,
+      layouts: Object.values(projection.pageLayouts || {}),
+      annotations: state.annotations || [],
+      nodes: state.nodes || [],
     });
-  }
-
-  function getFocusRelatedAnnotations(focusedId: string) {
-    const annotations = state.annotations || [];
-    if (!focusedId) return [];
-    return annotations.filter((annotation) => annotation.sourceNodeId === focusedId || annotation.targetNodeId === focusedId);
   }
 
   function getContextualLayoutState(projection, workspace) {

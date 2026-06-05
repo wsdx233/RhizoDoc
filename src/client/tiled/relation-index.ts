@@ -9,6 +9,7 @@ export type TiledRelationCandidate = {
   weight: number;
   annotationId?: string;
   annotationDirection?: 'source-to-target' | 'target-to-source';
+  annotationAnchorKind?: 'text' | 'title';
   structuralDirection?: 'parent-to-child' | 'child-to-parent';
 };
 
@@ -19,9 +20,20 @@ export type TiledRelationIndex = {
   directCandidatesByTargetId: Map<string, TiledRelationCandidate[]>;
 };
 
+export const TILED_TITLE_ANCHOR_PREFIX = 'title-anchor';
+
 const ANNOTATION_WEIGHT = 160;
+const TITLE_ANCHOR_WEIGHT = 118;
 const STRUCTURAL_WEIGHT = 120;
 const SIBLING_WEIGHT = 35;
+
+export function getTiledTitleAnchorId(sourceId: string, targetId: string): string {
+  return `${TILED_TITLE_ANCHOR_PREFIX}:${sourceId}:${targetId}`;
+}
+
+export function isTiledTitleAnchorId(annotationId = ''): boolean {
+  return annotationId.startsWith(`${TILED_TITLE_ANCHOR_PREFIX}:`);
+}
 
 export function buildTiledRelationIndex(
   nodes: RhizoNode[] = [],
@@ -42,6 +54,7 @@ export function buildTiledRelationIndex(
     if (!existing || candidate.weight > existing.weight) targetMap.set(key, candidate);
   };
 
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
   for (const node of nodes) {
     const parentId = typeof node.parentId === 'string' ? node.parentId : '';
     if (!parentId || !nodeIds.has(parentId) || parentId === node.id) continue;
@@ -49,7 +62,16 @@ export function buildTiledRelationIndex(
     const children = childrenByParentId.get(parentId) || [];
     children.push(node.id);
     childrenByParentId.set(parentId, children);
-    addBidirectionalStructuralCandidate(addCandidate, parentId, node.id, STRUCTURAL_WEIGHT);
+  }
+
+  for (const [parentId, childIds] of childrenByParentId.entries()) {
+    for (const childId of childIds) {
+      const child = nodeById.get(childId);
+      addBidirectionalStructuralCandidate(addCandidate, parentId, childId, STRUCTURAL_WEIGHT);
+      if (child?.generated) {
+        addTitleAnchorCandidate(addCandidate, parentId, childId);
+      }
+    }
   }
 
   for (const edge of edges) {
@@ -65,6 +87,7 @@ export function buildTiledRelationIndex(
       weight: ANNOTATION_WEIGHT,
       annotationId: annotation.id,
       annotationDirection: 'source-to-target',
+      annotationAnchorKind: 'text',
     });
     addCandidate({
       sourceId: annotation.targetNodeId,
@@ -73,6 +96,7 @@ export function buildTiledRelationIndex(
       weight: ANNOTATION_WEIGHT - 10,
       annotationId: annotation.id,
       annotationDirection: 'target-to-source',
+      annotationAnchorKind: 'text',
     });
   }
 
@@ -96,6 +120,32 @@ export function getTiledRelationCandidates(
     candidates.push({ sourceId: focusNodeId, targetId, kind: 'sibling', weight: SIBLING_WEIGHT });
   }
   return candidates;
+}
+
+function addTitleAnchorCandidate(
+  addCandidate: (candidate: TiledRelationCandidate) => void,
+  sourceId: string,
+  targetId: string,
+) {
+  const annotationId = getTiledTitleAnchorId(sourceId, targetId);
+  addCandidate({
+    sourceId,
+    targetId,
+    kind: 'annotation',
+    weight: TITLE_ANCHOR_WEIGHT,
+    annotationId,
+    annotationDirection: 'source-to-target',
+    annotationAnchorKind: 'title',
+  });
+  addCandidate({
+    sourceId: targetId,
+    targetId: sourceId,
+    kind: 'annotation',
+    weight: TITLE_ANCHOR_WEIGHT - 10,
+    annotationId,
+    annotationDirection: 'target-to-source',
+    annotationAnchorKind: 'title',
+  });
 }
 
 function addBidirectionalStructuralCandidate(
