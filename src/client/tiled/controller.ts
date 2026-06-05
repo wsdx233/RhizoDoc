@@ -19,6 +19,8 @@ import {
   projectTiledColumns,
 } from '../../shared/workspace.js';
 
+const TILED_CONTENT_SCROLL_SEMANTIC_INTERVAL_MS = 120;
+
 type TiledWorkspaceControllerOptions = {
   root: HTMLElement;
   state: any;
@@ -34,6 +36,8 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
   let suppressNextClick = false;
   let pendingResizeLayoutRefresh = 0;
   let pendingContentScrollLayoutRefresh = 0;
+  let pendingContentScrollLayoutTimeout = 0;
+  let lastContentScrollLayoutRefreshAt = 0;
   let pendingAnchorMaterializedRefresh = 0;
   const layoutEngine = createTiledLayoutController({ root, state, getNode });
   const relations = createTiledRelationsController({ root, state, ensureWorkspace });
@@ -69,6 +73,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     const previousScrollLeft = root.scrollLeft;
     const previousScrollTop = root.scrollTop;
     const previousFieldOffsetY = layoutEngine.getCurrentFieldOffsetY();
+    cancelPendingContentScrollLayoutRefresh();
     relations.cancel();
     unmountStreamdownContent();
 
@@ -190,6 +195,10 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     const section = root.querySelector(`[data-node-id="${cssAttr(nodeId)}"]`) as HTMLElement | null;
     if (!section) return NaN;
     return section.getBoundingClientRect().top - root.getBoundingClientRect().top;
+  }
+
+  function getNow() {
+    return typeof performance !== 'undefined' ? performance.now() : Date.now();
   }
 
   function unmountStreamdownContent(nodeId = '') {
@@ -347,11 +356,35 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
   }
 
   function scheduleContentScrollLayoutRefresh() {
+    if (state.activeView !== 'tiled') return;
+    const now = getNow();
+    const elapsed = now - lastContentScrollLayoutRefreshAt;
+    if (elapsed < TILED_CONTENT_SCROLL_SEMANTIC_INTERVAL_MS) {
+      if (pendingContentScrollLayoutTimeout) return;
+      pendingContentScrollLayoutTimeout = window.setTimeout(() => {
+        pendingContentScrollLayoutTimeout = 0;
+        scheduleContentScrollLayoutRefresh();
+      }, TILED_CONTENT_SCROLL_SEMANTIC_INTERVAL_MS - elapsed);
+      return;
+    }
+
     if (pendingContentScrollLayoutRefresh) return;
     pendingContentScrollLayoutRefresh = requestAnimationFrame(() => {
       pendingContentScrollLayoutRefresh = 0;
+      lastContentScrollLayoutRefreshAt = getNow();
       if (state.activeView === 'tiled') refreshLayoutPositions({ reason: 'content-scroll' });
     });
+  }
+
+  function cancelPendingContentScrollLayoutRefresh() {
+    if (pendingContentScrollLayoutRefresh) {
+      cancelAnimationFrame(pendingContentScrollLayoutRefresh);
+      pendingContentScrollLayoutRefresh = 0;
+    }
+    if (pendingContentScrollLayoutTimeout) {
+      window.clearTimeout(pendingContentScrollLayoutTimeout);
+      pendingContentScrollLayoutTimeout = 0;
+    }
   }
 
   function handleContentAnchorsChanged(nodeId: string) {
