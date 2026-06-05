@@ -71,10 +71,29 @@ export function createTiledNavigationController(options: TiledNavigationControll
     const nextColumn = columns.find((column) => column.pageIds.includes(nextNodeId)) || columns[columnIndex];
     workspace.focus = { workspaceId: workspace.id, region: 'columns', columnId: nextColumn.id, nodeId: nextNodeId };
     workspace.updatedAt = new Date().toISOString();
-    refreshLayoutPositions({ animateFocusedSection: false, lockFocusedViewport: true });
-    requestAnimationFrame(() => {
-      root.querySelector(`[data-node-id="${cssAttr(nextNodeId)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-    });
+    const horizontalNavigation = key === 'ArrowLeft' || key === 'ArrowRight';
+    if (horizontalNavigation) {
+      refreshLayoutPositions();
+      requestAnimationFrame(() => scrollNodeIntoHorizontalView(nextNodeId));
+    } else {
+      refreshLayoutPositions({ animateFocusedSection: false, lockFocusedViewport: true });
+      requestAnimationFrame(() => {
+        root.querySelector(`[data-node-id="${cssAttr(nextNodeId)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      });
+    }
+  }
+
+  function scrollNodeIntoHorizontalView(nodeId: string) {
+    const section = root.querySelector(`[data-node-id="${cssAttr(nodeId)}"]`) as HTMLElement | null;
+    if (!section) return;
+    const sectionRect = section.getBoundingClientRect();
+    const rootRect = root.getBoundingClientRect();
+    const margin = 24;
+    if (sectionRect.left < rootRect.left + margin) {
+      root.scrollLeft -= rootRect.left + margin - sectionRect.left;
+    } else if (sectionRect.right > rootRect.right - margin) {
+      root.scrollLeft += sectionRect.right - rootRect.right + margin;
+    }
   }
 
   function getNearestVerticalNodeId(nodeId: string, key: string) {
