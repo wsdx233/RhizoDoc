@@ -26,6 +26,13 @@ type TiledWorkspaceControllerOptions = {
   isEditableTarget: (target: EventTarget | null) => boolean;
 };
 
+type TiledLayoutRefreshOptions = {
+  animateRelations?: boolean;
+  animateSections?: boolean;
+  animateFocusedSection?: boolean;
+  lockFocusedViewport?: boolean;
+};
+
 export function createTiledWorkspaceController(options: TiledWorkspaceControllerOptions) {
   const { root, state, getNode, openFullscreen, isEditableTarget } = options;
   let resizeGesture: any = null;
@@ -109,7 +116,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     relations.scheduleDraw();
   }
 
-  function refreshLayoutPositions(options: { animateRelations?: boolean; animateSections?: boolean; animateFocusedSection?: boolean; lockFocusedViewport?: boolean } = {}) {
+  function refreshLayoutPositions(options: TiledLayoutRefreshOptions = {}) {
     const workspace = ensureWorkspace();
     const fieldEl = root.querySelector('.tiled-field') as HTMLElement | null;
     if (!fieldEl || state.nodes.length === 0) return;
@@ -395,7 +402,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
       return;
     }
 
-    focusSection((event.target as Element).closest('.tiled-section') as HTMLElement | null);
+    focusSection((event.target as Element).closest('.tiled-section') as HTMLElement | null, { direct: true });
 
     const header = (event.target as Element).closest('.tiled-section-header') as HTMLElement | null;
     const section = header?.closest('.tiled-section') as HTMLElement | null;
@@ -420,11 +427,15 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     else refreshLayoutPositions();
   }
 
-  function focusSection(section) {
+  function focusSection(section, options: { direct?: boolean } = {}) {
     const nodeId = section?.dataset.nodeId;
     if (!nodeId) return;
     const changed = ensureWorkspace().focus?.nodeId !== nodeId;
-    focusWorkspaceNode(nodeId, { scroll: false, forceRefresh: changed });
+    focusWorkspaceNode(nodeId, {
+      scroll: false,
+      forceRefresh: changed,
+      layoutOptions: options.direct ? {} : { animateFocusedSection: false, lockFocusedViewport: true },
+    });
     if (!changed) {
       root.querySelectorAll('.tiled-section.focused').forEach((item) => item.classList.remove('focused'));
       section.classList.add('focused');
@@ -432,7 +443,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     }
   }
 
-  function focusWorkspaceNode(nodeId, { scroll = false, forceRefresh = true } = {}) {
+  function focusWorkspaceNode(nodeId, { scroll = false, forceRefresh = true, layoutOptions = { animateFocusedSection: false, lockFocusedViewport: true } as TiledLayoutRefreshOptions } = {}) {
     if (!getNode(nodeId)) return false;
     const workspace = ensureWorkspace();
     const projection = projectTiledColumns(state.nodes, state.edges, workspace, state.annotations || []);
@@ -442,7 +453,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     workspace.updatedAt = new Date().toISOString();
 
     const existingSection = root.querySelector(`[data-node-id="${cssAttr(nodeId)}"]`);
-    if (existingSection && forceRefresh) refreshLayoutPositions({ animateFocusedSection: false, lockFocusedViewport: true });
+    if (existingSection && forceRefresh) refreshLayoutPositions(layoutOptions);
     else if (!existingSection) render();
 
     if (scroll) {
