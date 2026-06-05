@@ -1,4 +1,5 @@
 import type {
+  RhizoAnnotation,
   RhizoEdge,
   RhizoNode,
   RhizoWorkspace,
@@ -34,10 +35,26 @@ export type TiledProjectionResult = {
 type WorkspaceContext = {
   nodes: RhizoNode[];
   edges: RhizoEdge[];
+  annotations?: RhizoAnnotation[];
   activeWorkspaceId?: unknown;
 };
 
-export function createDefaultTiledWorkspace(nodes: RhizoNode[], edges: RhizoEdge[], now = new Date().toISOString()): RhizoWorkspace {
+type AnnotationOrderHint = {
+  annotationId: string;
+  sourceNodeId: string;
+  start: number;
+  length: number;
+  annotationIndex: number;
+};
+
+type ReadingOrderContext = {
+  nodeById: Map<string, RhizoNode>;
+  nodeIndexById: Map<string, number>;
+  annotationByTargetId: Map<string, AnnotationOrderHint>;
+  keyCache: Map<string, number[]>;
+};
+
+export function createDefaultTiledWorkspace(nodes: RhizoNode[], edges: RhizoEdge[], now = new Date().toISOString(), annotations: RhizoAnnotation[] = []): RhizoWorkspace {
   const projection: TiledProjection = { mode: 'depth', includeOrphans: true };
   return {
     id: DEFAULT_TILED_WORKSPACE_ID,
@@ -46,7 +63,7 @@ export function createDefaultTiledWorkspace(nodes: RhizoNode[], edges: RhizoEdge
     createdAt: now,
     updatedAt: now,
     projection,
-    columns: projectTiledColumns(nodes, edges, { projection }).columns,
+    columns: projectTiledColumns(nodes, edges, { projection }, annotations).columns,
     pages: {},
     floating: [],
     focus: null,
@@ -89,7 +106,7 @@ export function normalizeTiledWorkspace(
     projection,
     columns: Array.isArray(rawWorkspace.columns) ? rawWorkspace.columns : [],
     pages: pageOverrides,
-  });
+  }, context.annotations || []);
 
   return {
     id,
@@ -109,11 +126,13 @@ export function projectTiledColumns(
   nodes: RhizoNode[],
   edges: RhizoEdge[],
   workspace: Pick<RhizoWorkspace, 'projection'> & Partial<Pick<RhizoWorkspace, 'columns' | 'pages'>> = { projection: { mode: 'depth', includeOrphans: true } },
+  annotations: RhizoAnnotation[] = [],
 ): TiledProjectionResult {
   const nodeIds = new Set(nodes.map((node) => node.id).filter(Boolean));
   if (nodeIds.size === 0) return { rootId: null, depths: {}, orphanNodeIds: [], columns: [], pageLayouts: {} };
 
   const projection = normalizeTiledProjection(workspace.projection);
+  const readingOrder = buildReadingOrderContext(nodes, annotations);
   const rootId = selectProjectionRoot(nodes, nodeIds, projection.rootId);
   const childrenByNode = buildChildrenByNode(nodes, edges, nodeIds);
   const depths = rootId ? collectDepths(rootId, childrenByNode, projection.maxDepth) : {};
@@ -133,6 +152,8 @@ export function projectTiledColumns(
     pageIds.push(node.id);
     pageIdsByDepth.set(depth, pageIds);
   }
+
+  pageIdsByDepth.forEach((pageIds) => pageIds.sort((a, b) => compareReadingOrder(a, b, readingOrder)));
 
   const visibleNodeIds = new Set([...pageIdsByDepth.values()].flat());
   const persistedColumnsByDepth = new Map<number, TiledColumn>();
@@ -166,6 +187,7 @@ export function projectTiledColumns(
       persistedColumnsByDepth.get(depth),
       persistedPageIdsByDepth.get(depth) || [],
       persistedPageIds,
+      readingOrder,
     ))
     .filter((column) => column.pageIds.length > 0);
 
@@ -178,6 +200,7 @@ function normalizeProjectedColumn(
   persistedColumn: TiledColumn | undefined,
   persistedPageIdsForColumn: string[],
   persistedPageIds: Set<string>,
+  readingOrder: ReadingOrderContext,
 ): TiledColumn {
   const orderedPageIds: string[] = [];
   const seenPageIds = new Set<string>();
@@ -197,9 +220,100 @@ function normalizeProjectedColumn(
     id: cleanString(persistedColumn?.id, `depth-${depth}`),
     depth,
     width: clampNumber(persistedColumn?.width, MIN_TILED_COLUMN_WIDTH, MAX_TILED_COLUMN_WIDTH, DEFAULT_TILED_COLUMN_WIDTH),
-    pageIds: orderedPageIds,
+    pageIds: normalizeAnnotationSiblingOrder(orderedPageIds, readingOrder),
     collapsed: Boolean(persistedColumn?.collapsed),
   };
+}
+
+function buildReadingOrderContext(nodes: RhizoNode[], annotations: RhizoAnnotation[]): ReadingOrderContext {
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const nodeIndexById = new Map(nodes.map((node, index) => [node.id, index]));
+  const annotationByTargetId = new Map<string, AnnotationOrderHint>();
+
+  annotations.forEach((annotation, annotationIndex) => {
+    if (!annotation.id || !nodeById.has(annotation.sourceNodeId) || !nodeById.has(annotation.targetNodeId)) return;
+    const candidate = {
+      annotationId: annotation.id,
+      sourceNodeId: annotation.sourceNodeId,
+      start: Math.max(0, finiteNumber(annotation.start, Number.MAX_SAFE_INTEGER)),
+      length: Math.max(0, finiteNumber(annotation.length, 0)),
+      annotationIndex,
+    };
+    const existing = annotationByTargetId.get(annotation.targetNodeId);
+    if (!existing || compareAnnotationOrderHint(candidate, existing) < 0) annotationByTargetId.set(annotation.targetNodeId, candidate);
+  });
+
+  return { nodeById, nodeIndexById, annotationByTargetId, keyCache: new Map() };
+}
+
+function compareAnnotationOrderHint(a: AnnotationOrderHint, b: AnnotationOrderHint) {
+  return a.start - b.start
+    || a.length - b.length
+    || a.annotationIndex - b.annotationIndex
+    || a.annotationId.localeCompare(b.annotationId);
+}
+
+function normalizeAnnotationSiblingOrder(pageIds: string[], readingOrder: ReadingOrderContext): string[] {
+  const normalized = [...pageIds];
+  const groups = new Map<string, number[]>();
+
+  normalized.forEach((nodeId, index) => {
+    const groupKey = getAnnotationSiblingGroupKey(nodeId, readingOrder);
+    if (!groupKey) return;
+    const indexes = groups.get(groupKey) || [];
+    indexes.push(index);
+    groups.set(groupKey, indexes);
+  });
+
+  for (const indexes of groups.values()) {
+    if (indexes.length < 2) continue;
+    const sortedIds = indexes.map((index) => normalized[index]).sort((a, b) => compareReadingOrder(a, b, readingOrder));
+    indexes.forEach((pageIndex, sortedIndex) => {
+      normalized[pageIndex] = sortedIds[sortedIndex];
+    });
+  }
+
+  return normalized;
+}
+
+function getAnnotationSiblingGroupKey(nodeId: string, readingOrder: ReadingOrderContext): string {
+  const hint = readingOrder.annotationByTargetId.get(nodeId);
+  if (!hint) return '';
+  const node = readingOrder.nodeById.get(nodeId);
+  const parentId = node?.parentId || '';
+  if (parentId && parentId !== hint.sourceNodeId) return '';
+  return hint.sourceNodeId;
+}
+
+function compareReadingOrder(a: string, b: string, readingOrder: ReadingOrderContext) {
+  const aKey = getReadingOrderKey(a, readingOrder);
+  const bKey = getReadingOrderKey(b, readingOrder);
+  const length = Math.max(aKey.length, bKey.length);
+  for (let index = 0; index < length; index += 1) {
+    const delta = (aKey[index] ?? 0) - (bKey[index] ?? 0);
+    if (delta !== 0) return delta;
+  }
+  return a.localeCompare(b);
+}
+
+function getReadingOrderKey(nodeId: string, readingOrder: ReadingOrderContext, seen = new Set<string>()): number[] {
+  const cached = readingOrder.keyCache.get(nodeId);
+  if (cached) return cached;
+
+  const node = readingOrder.nodeById.get(nodeId);
+  const nodeIndex = readingOrder.nodeIndexById.get(nodeId) ?? Number.MAX_SAFE_INTEGER;
+  if (!node || seen.has(nodeId)) return [1, nodeIndex];
+
+  seen.add(nodeId);
+  const parentId = node.parentId && readingOrder.nodeById.has(node.parentId) ? node.parentId : '';
+  const parentKey = parentId ? getReadingOrderKey(parentId, readingOrder, seen) : [];
+  const hint = readingOrder.annotationByTargetId.get(nodeId);
+  const localKey = hint && (!parentId || hint.sourceNodeId === parentId)
+    ? [0, hint.start, hint.length, hint.annotationIndex, nodeIndex]
+    : [1, nodeIndex];
+  const key = [...parentKey, ...localKey];
+  readingOrder.keyCache.set(nodeId, key);
+  return key;
 }
 
 function buildTiledPageLayouts(columns: TiledColumn[], pages: Record<string, TiledPageState>): Record<string, TiledPageLayout> {

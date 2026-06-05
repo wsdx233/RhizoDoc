@@ -2,11 +2,11 @@
 
 ## Purpose
 
-The second RhizoDoc frontend is a **tiled relation field** over the same document graph. It should borrow the feel of a tiling window manager: every depth column is a tiled stack, panels are contiguous, ordering is explicit, and keyboard operations can move focus or swap neighboring panels.
+The second RhizoDoc frontend is a **tiled relation field** over the same document graph. It borrows part of the feel of a tiling window manager: every depth column has a deterministic stack order, and keyboard operations can move focus or swap neighboring panels. Unlike a strict tiling manager, stacks are **elastic**: adjacent panels may have automatically computed whitespace between them when relation-aware layout needs room to align meaningful context.
 
-The infinite canvas remains the free spatial map. The tiled relation field is the dense reading/synthesis view: horizontal position is graph depth, vertical order is a tiling stack inside each depth, and the current focus can shift neighboring columns as whole stacks so the most relevant related panels appear near the reading context.
+The infinite canvas remains the free spatial map. The tiled relation field is the dense reading/synthesis view: horizontal position is graph depth, vertical order is a stack inside each depth, and the current focus plus graph/annotation relations can produce automatic vertical spacing so related panels appear near the reading context.
 
-> Graph depth decides columns. Tiling order decides each column. Focus context decides relative column offsets.
+> Graph depth decides columns. Tiling order decides each column. Focus context and relations decide automatic elastic spacing. Users do not author explicit gaps.
 
 ## Core Principles
 
@@ -15,17 +15,22 @@ The infinite canvas remains the free spatial map. The tiled relation field is th
    - Layout state must not silently move a node across depth columns.
    - Reparenting or graph edits are explicit content operations, not layout operations.
 
-2. **Each column is a tiling stack**
-   - Panels in one column are stacked contiguously, like a tiling window manager.
-   - There are no arbitrary holes between neighboring panels in the same column.
-   - The persisted layout primitive is per-column order, i.e. `columns[].pageIds` for the matching depth.
-   - Users must be able to swap a focused panel with its previous/next neighbor by keyboard.
+2. **Each column is an elastic ordered stack**
+   - Panels in one column keep a deterministic order and may not overlap.
+   - Adjacent panels may have automatically computed whitespace between them.
+   - This whitespace is derived render state, not a persisted user-authored gap.
+   - The persisted layout primitive is still per-column order, i.e. `columns[].pageIds` for the matching depth.
+   - Default derived order follows document reading order: children generated from annotations on the same source are ordered by annotation start position, not by annotation creation time.
+   - Annotation-derived sibling groups are canonicalized back to source reading order during projection, so old automatically persisted creation-order columns do not override the reading model.
+   - Users must be able to swap a focused panel with its previous/next neighbor by keyboard; a future explicit order-override flag may be needed if manual order should beat annotation reading order.
 
-3. **“Loose” means relative column offset, not floating panels**
-   - Left and right depth columns can be vertically offset relative to the focused column.
-   - This offset is calculated from the current focus context.
-   - The offset moves a whole column stack, preserving that column's tiling continuity.
-   - Individual panels do not drift freely inside the depth column.
+3. **“Loose” means constrained elastic spacing, not floating panels**
+   - Panels do not drift freely inside the depth column.
+   - The layout solver may separate neighboring panels only while preserving column order and non-overlap constraints.
+   - Relation alignment, focus context, panel heights, compact-stack priors, and measured anchors decide the computed spacing.
+   - Canonical layout must be deterministic for identical graph content, workspace order, panel dimensions, focus, and measured anchors.
+   - Previous rendered positions are only temporary interactive smoothing input; they are not canonical layout state.
+   - There is no manual gap state to maintain.
 
 4. **Focus context optimizes what is nearby**
    - When reading the focused node, neighboring columns should automatically put likely useful nodes near the focused panel.
@@ -56,10 +61,10 @@ Depth 0 stack              Depth 1 stack                 Depth 2 stack
 │ ...           │          │ Child B       │             │ ...           │
 └───────────────┘          └───────────────┘             └───────────────┘
        ▲                         ▲                              ▲
-       │ whole-column offset     │ focus column                 │ whole-column offset
+       │ elastic spacing         │ focus column                 │ elastic spacing
 ```
 
-The stacks remain tiled: panel-to-panel continuity inside a column is preserved. A focus-context layout pass can offset the left and right stacks so the most relevant panels line up around the focused panel.
+The stacks remain ordered and non-overlapping. A focus-context layout pass can insert automatic whitespace so the most relevant panels line up around the focused panel without making individual panels freely draggable layout objects.
 
 The workspace should allow intentional over-scroll. The user should be able to scroll far enough upward or downward that all panels leave the viewport; the limit is not the first/last panel touching the viewport edge.
 
@@ -101,7 +106,7 @@ Important invariants:
 - `TiledColumn.depth` is semantic graph depth.
 - `columns[].pageIds` stores order within that depth only.
 - If persisted `pageIds` place a node in the wrong depth, normalization/projection ignores that membership.
-- Relative column offsets are computed render state, not persisted per-panel free coordinates.
+- Elastic spacing is computed render state, not persisted per-panel free coordinates.
 
 ## Projection and Layout
 
@@ -109,46 +114,71 @@ Important invariants:
 2. Build relations from `edges` plus `parentId` fallback.
 3. Assign each node a primary depth by minimum reachable distance from root.
 4. Create one column stack per depth.
-5. Preserve persisted order for page ids that still belong to that depth.
-6. Append new nodes at the end of their depth stack.
-7. Compute base stack layout: each panel starts immediately after the previous panel.
-8. Compute contextual column offsets from current focus:
-   - focused column offset = 0;
-   - compute a stable `deltaY` for every adjacent depth-column pair;
-   - integrate those deltas left and right from the focused column.
+5. Preserve persisted order for page ids that still belong to that depth, except annotation-derived sibling groups are normalized to source reading order.
+6. Append new nodes according to derived reading order: annotation children by source annotation start, then ordinary node insertion order.
+7. Compute base compact stack layout with a small automatic minimum breathing gap.
+8. Compute relation-aware elastic stack positions:
+   - build an indexed relation model from edges, parent fallback, sibling context, and annotations;
+   - create a compact base snapshot for all columns;
+   - run bounded multi-pass relaxation from a consistent previous-pass snapshot;
+   - each column receives soft desired positions from related panels in that snapshot;
+   - a 1D weighted isotonic/PAVA solver preserves order and non-overlap while fitting desired positions.
 
-### Adjacent-column offset formula
+### Elastic ordered-stack formula
 
-The invariant is pairwise: every adjacent column pair has a relative displacement computed by the same formula. Columns are not independently aligned to the focused panel.
-
-For adjacent columns `L` and `R`:
-
-```text
-deltaY(L, R) = sourceBaseY + sourceAnchor - targetBaseY - targetAnchor
-```
-
-Where:
-
-- `source` / `target` are the highest-scoring related panel pair across the adjacent columns under the current focus context.
-- `sourceBaseY` and `targetBaseY` come from the current overall layout before contextual offsets.
-- `sourceAnchor` is normally the source panel center; if source is the focused panel, it is derived from the focused panel's current visible interval.
-- `targetAnchor` is the corresponding anchor in the target panel, clamped to that panel's height.
-
-Absolute offsets are then integrated from the focused column as anchor:
+For a column with panels in fixed order, the hard constraints are:
 
 ```text
-offsetY(focusColumn) = 0
-offsetY(column[i + 1]) = offsetY(column[i]) + deltaY(column[i], column[i + 1])
-offsetY(column[i - 1]) = offsetY(column[i]) - deltaY(column[i - 1], column[i])
+y[i + 1] >= y[i] + height[i] + minGap
 ```
 
-So the whole workspace satisfies a deterministic adjacent-column formula whose parameters are:
+The soft objective is:
 
 ```text
-current overall layout + focused panel id + focused panel visible interval position
+minimize Σ weight[i] * (y[i] - desiredY[i])²
 ```
 
-The result can change while the user scrolls the workspace, but it should be recomputed by patching positions, not by rebuilding Markdown content. Position changes should animate so the user can perceive continuity in the relation field.
+where `desiredY` is a weighted combination of:
+
+- compact-stack position;
+- relation alignment targets from the current relaxation snapshot;
+- focus-context boosts for the active panel and its strongest relations;
+- previous solved position only during explicit interactive smoothing, not canonical layout.
+
+This is reduced to weighted isotonic regression by subtracting cumulative panel heights and minimum gaps, then solved with Pool Adjacent Violators Algorithm (PAVA). The automatic whitespace between panels is the residual separation produced by this constrained fit.
+
+The result should be recomputed when focus, order, panel display/height, graph relations, or annotations change. Ordinary scrolling should redraw relation paths but should not continuously re-solve elastic gaps, because that would make the reading field feel unstable. Relation pulls are clamped and saturated so weak relations cannot accumulate into large empty fields.
+
+### Anchor model
+
+Elastic relation targets align **semantic anchors**, not just panel boxes.
+
+Anchor priority:
+
+1. Exact active annotation span when present, measurable, and visible in the source content viewport.
+2. Focused panel's currently visible Markdown/content interval.
+3. Focused panel's visible panel interval.
+4. Panel center fallback.
+
+This distinction matters for long panels: parent/context alignment should follow what the reader is currently seeing inside the focused panel, not the full card's center. Annotation relations should align to the highlighted source span when available.
+
+Visibility is part of the anchor contract:
+
+- `visible`: the semantic span is actually visible and may participate in layout.
+- `above-viewport` / `below-viewport`: the span exists but is outside the current reading viewport. It may be used for cues, but it must not pull target panels or consume elastic whitespace.
+
+Clamping an offscreen annotation to the top/bottom boundary is a visual cue only. It is not a real layout anchor.
+
+## Focus Lens
+
+Raw graph and annotation relations are first interpreted by a focus lens before they affect layout or overlays. The lens assigns relation roles such as:
+
+- `annotation-jump`: an active annotation relation that may exactly align semantic anchors.
+- `active-path`: the focused structural path, for example focused child → parent/context.
+- `fanout-context`: high fan-out structural context that should not pull every child at once.
+- `background`: relation data that remains available for navigation/search but does not affect current layout.
+
+The layout solver consumes lens policies rather than deciding relation semantics itself. This keeps PAVA layout math separate from product choices about browsing intent, visual clutter, and high fan-out behavior.
 
 ## Relationship Tension
 
@@ -156,14 +186,16 @@ Relations should be visible as a dynamic field over the tiled stacks.
 
 Structural relations:
 
-- Parent-child edges use neutral/primary curves.
-- Focused panel strengthens parent and child paths.
-- Used for left/right navigation and context offset scoring.
+- Parent-child relations are expressed primarily by depth columns, stack order, focus-lens roles, and navigation.
+- They may influence layout as active focus context, for example when a focused child asks its parent/context to follow the current reading anchor.
+- They are **not** drawn as default SVG curves in the tiled view; drawing every structural edge creates visual noise in high fan-out workspaces.
+- Used for left/right navigation and context scoring.
 
 Annotation relations:
 
 - Annotation source/target lines inherit annotation color.
 - Prefer exact highlighted mark as source anchor when visible.
+- Offscreen annotation marks should become edge/cue state, not layout pulls; they must not be clamped to viewport boundaries as if they were visible anchors.
 - Stronger than structural edges for focus-context layout scoring.
 - Used to pull annotation-related panels into view around the focused panel.
 
@@ -187,7 +219,7 @@ Tiling layout operations:
 
 - `Shift+ArrowUp`: swap focused panel with previous panel in the same depth stack.
 - `Shift+ArrowDown`: swap focused panel with next panel in the same depth stack.
-- `Shift + primary-button drag` on a panel: resize the panel and its depth column together; horizontal drag changes column width, vertical drag changes panel height.
+- `Shift + primary-button drag` on a panel: resize the panel and its depth column together; horizontal drag changes column width, vertical drag changes panel height. The elastic solver then recomputes automatic spacing from the new heights.
 - `[` / `]`: shorten/tallify focused panel.
 - `Space`: title-only toggle.
 
@@ -205,11 +237,13 @@ The current DOM implementation can remain for MVP:
 - keep input handling inside the tiled workspace controller as event delegation plus small gesture state machines;
 - treat pointer gestures, keyboard commands, scroll intent, and text selection as separate input channels;
 - render depth columns as absolute stack lanes;
-- render each panel at its computed stack y plus contextual column offset;
+- render each panel at its computed elastic y;
+- keep relation indexing and contextual layout mostly pure TypeScript so behavior is unit-testable without DOM;
 - add viewport-sized vertical slack above and below the field, so over-scroll can move every panel out of view;
+- measure semantic anchors separately from layout solving: visible content interval, annotation span, visible panel fallback;
 - draw relation SVG paths from measured DOM anchors;
-- recalculate offsets and relation paths when focus, order, height, workspace scroll, or annotations change;
-- when only offsets change because of workspace scroll, patch section positions instead of rebuilding Markdown DOM;
+- recalculate elastic positions and relation paths when focus, order, height, display mode, graph relations, or annotations change;
+- workspace scroll should redraw relation paths without re-solving elastic gaps;
 - animate patched `left/top/width/height` changes and redraw relation paths during the transition.
 
 A future renderer island may own the tiled workspace once interactions grow, but the pure projection/order rules should remain shared TypeScript.
@@ -220,19 +254,24 @@ A future renderer island may own the tiled workspace once interactions grow, but
 
 - Keep depth-derived columns.
 - Reject cross-depth membership as a layout override.
-- Render columns as contiguous tiling stacks.
+- Render columns as ordered non-overlapping elastic stacks.
 - Add relation overlay.
 - Make left/right graph-aware.
 - Make up/down stack-aware.
 - Add Shift+Up/Down stack swapping.
-- Add computed focus-context offsets for neighboring columns.
+- Add computed focus-context elastic spacing for neighboring columns.
 
-### Phase B: Better context scoring
+### Phase B: Better context scoring and layout purity
 
+- Keep the PAVA stack solver pure and deterministic.
+- Build indexed relation candidates instead of scanning every edge/annotation for every pair.
+- Use a focus-lens policy layer between raw relations and layout/overlay/navigation behavior.
+- Use snapshot-based multi-pass relaxation instead of asymmetric left/right solve order.
 - Score annotation source/target strongest.
-- Score parent/child next.
-- Score siblings/backlinks/semantic search lower.
+- Score active structural path next.
+- Keep high fan-out parent → children relations bounded as `fanout-context` until the user identifies a current child/annotation/hover target.
 - Add tie-breaking based on recency, current viewport, and node generation source.
+- Use previous positions only for explicit interactive smoothing, not canonical layout.
 
 ### Phase C: Offscreen and relaxation cues
 

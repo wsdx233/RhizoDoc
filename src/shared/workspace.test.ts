@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { RhizoEdge, RhizoNode, RhizoWorkspace } from './types.js';
+import type { RhizoAnnotation, RhizoEdge, RhizoNode, RhizoWorkspace } from './types.js';
 import { validateFlow } from './schemas.js';
 import {
   DEFAULT_TILED_COLUMN_WIDTH,
@@ -31,6 +31,10 @@ function node(id: string, parentId: string | null = null): RhizoNode {
 
 function edge(sourceId: string, targetId: string): RhizoEdge {
   return { id: `${sourceId}-${targetId}`, sourceId, targetId };
+}
+
+function annotation(id: string, sourceNodeId: string, targetNodeId: string, start: number): RhizoAnnotation {
+  return { id, sourceNodeId, targetNodeId, start, length: 1, text: 'x', colorIndex: 0 };
 }
 
 describe('tiled workspace projection', () => {
@@ -85,6 +89,38 @@ describe('tiled workspace projection', () => {
     expect(depthOne?.id).toBe('custom-depth-1');
     expect(depthOne?.width).toBe(MIN_TILED_COLUMN_WIDTH);
     expect(depthOne?.pageIds).toEqual(['b', 'a', 'c']);
+  });
+
+  it('orders annotation-generated children by source reading position instead of creation order', () => {
+    const nodes = [node('node-root'), node('later', 'node-root'), node('earlier', 'node-root')];
+    const edges = [edge('node-root', 'later'), edge('node-root', 'earlier')];
+    const annotations = [
+      annotation('ann-later', 'node-root', 'later', 120),
+      annotation('ann-earlier', 'node-root', 'earlier', 20),
+    ];
+
+    const projection = projectTiledColumns(nodes, edges, undefined, annotations);
+
+    expect(projection.columns.find((column) => column.depth === 1)?.pageIds).toEqual(['earlier', 'later']);
+  });
+
+  it('normalizes persisted automatic annotation sibling order back to source reading order', () => {
+    const nodes = [node('node-root'), node('later', 'node-root'), node('earlier', 'node-root'), node('free', 'node-root')];
+    const edges = [edge('node-root', 'later'), edge('node-root', 'earlier'), edge('node-root', 'free')];
+    const annotations = [
+      annotation('ann-later', 'node-root', 'later', 120),
+      annotation('ann-earlier', 'node-root', 'earlier', 20),
+    ];
+    const persistedWorkspace = {
+      projection: { mode: 'depth', includeOrphans: true },
+      columns: [
+        { id: 'depth-1', depth: 1, width: 420, pageIds: ['later', 'free', 'earlier'] },
+      ],
+    } as Pick<RhizoWorkspace, 'projection' | 'columns'>;
+
+    const projection = projectTiledColumns(nodes, edges, persistedWorkspace, annotations);
+
+    expect(projection.columns.find((column) => column.depth === 1)?.pageIds).toEqual(['earlier', 'free', 'later']);
   });
 
   it('keeps columns tied to graph depth while preserving order inside a depth', () => {

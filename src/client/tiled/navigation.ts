@@ -78,7 +78,7 @@ export function createTiledNavigationController(options: TiledNavigationControll
   function getNearestVerticalNodeId(nodeId: string, key: string) {
     if (!nodeId) return '';
     const workspace = ensureWorkspace();
-    const projection = projectTiledColumns(state.nodes, state.edges, workspace);
+    const projection = projectTiledColumns(state.nodes, state.edges, workspace, state.annotations || []);
     const current = projection.pageLayouts[nodeId];
     if (!current) return '';
     const candidates = Object.values(projection.pageLayouts)
@@ -90,7 +90,7 @@ export function createTiledNavigationController(options: TiledNavigationControll
 
   function swapFocusedPanel(key: string) {
     const workspace = ensureWorkspace();
-    const projection = projectTiledColumns(state.nodes, state.edges, workspace);
+    const projection = projectTiledColumns(state.nodes, state.edges, workspace, state.annotations || []);
     workspace.columns = projection.columns;
     const nodeId = workspace.focus?.nodeId || workspace.columns[0]?.pageIds[0];
     if (!nodeId) return;

@@ -1,4 +1,4 @@
-import { clamp, cssAttr } from '../utils.js';
+import { cssAttr } from '../utils.js';
 
 type TiledRelationsControllerOptions = {
   root: HTMLElement;
@@ -42,6 +42,7 @@ export function createTiledRelationsController(options: TiledRelationsController
     const workspace = ensureWorkspace();
     const focusedId = workspace.focus?.nodeId || '';
     const annotationRelations = state.annotations.map((annotation) => ({
+      annotationId: annotation.id,
       sourceId: annotation.sourceNodeId,
       targetId: annotation.targetNodeId,
       type: 'annotation',
@@ -49,8 +50,8 @@ export function createTiledRelationsController(options: TiledRelationsController
     }));
 
     for (const relation of annotationRelations) {
-      if (!relation.sourceId || !relation.targetId || relation.sourceId === relation.targetId) continue;
-      const source = getSectionAnchor(relation.sourceId, relation.type === 'annotation' ? relation.targetId : '');
+      if (!relation.annotationId || !relation.sourceId || !relation.targetId || relation.sourceId === relation.targetId) continue;
+      const source = getSectionAnchor(relation.sourceId, relation.targetId, relation.annotationId);
       const target = getSectionAnchor(relation.targetId);
       if (!source || !target) continue;
       const active = focusedId && (relation.sourceId === focusedId || relation.targetId === focusedId);
@@ -62,20 +63,29 @@ export function createTiledRelationsController(options: TiledRelationsController
     }
   }
 
-  function getSectionAnchor(nodeId, targetId = '') {
+  function getSectionAnchor(nodeId, targetId = '', annotationId = '') {
     const section = root.querySelector(`[data-node-id="${cssAttr(nodeId)}"]`) as HTMLElement | null;
     if (!section || !isSectionVisibleInWorkspace(section)) return null;
     const field = section.closest('.tiled-field') as HTMLElement | null;
     const fieldRect = (field || root).getBoundingClientRect();
-    const anchorElement = targetId
-      ? section.querySelector(`[data-ref-id="${cssAttr(targetId)}"]`) as HTMLElement | null
-      : null;
+    const anchorElement = findRelationAnchorElement(section, annotationId, targetId);
+    if (annotationId && !anchorElement) return null;
     const rect = getRelationAnchorRect(section, anchorElement);
+    if (!rect) return null;
     return {
       x: rect.left - fieldRect.left + (field?.scrollLeft || 0) + rect.width / 2,
       y: rect.top - fieldRect.top + (field?.scrollTop || 0) + rect.height / 2,
       section,
     };
+  }
+
+  function findRelationAnchorElement(section: HTMLElement, annotationId = '', targetId = '') {
+    if (annotationId) {
+      return section.querySelector(`[data-annotation-id="${cssAttr(annotationId)}"]`) as HTMLElement | null;
+    }
+    return targetId
+      ? section.querySelector(`[data-ref-id="${cssAttr(targetId)}"]`) as HTMLElement | null
+      : null;
   }
 
   function isSectionVisibleInWorkspace(section: HTMLElement) {
@@ -104,14 +114,7 @@ export function createTiledRelationsController(options: TiledRelationsController
       return rectLike(visibleLeft, visibleTop, visibleRight - visibleLeft, visibleBottom - visibleTop);
     }
 
-    const anchorCenterX = anchorRect.left + anchorRect.width / 2;
-    const clampedX = clamp(anchorCenterX, contentRect.left, contentRect.right);
-    const clampedY = anchorRect.bottom < contentRect.top
-      ? contentRect.top
-      : anchorRect.top > contentRect.bottom
-        ? contentRect.bottom
-        : clamp(anchorRect.top + anchorRect.height / 2, contentRect.top, contentRect.bottom);
-    return rectLike(clampedX, clampedY, 0, 0);
+    return null;
   }
 
   function rectLike(left: number, top: number, width: number, height: number) {

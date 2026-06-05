@@ -7,10 +7,11 @@ type TiledRenderControllerOptions = {
   state: any;
   getNode: (id: string) => any;
   attachScrollIntent: (nodeId: string, contentEl: HTMLElement) => unknown;
+  onContentAnchorsChanged?: (nodeId: string) => void;
 };
 
 export function createTiledRenderController(options: TiledRenderControllerOptions) {
-  const { root, state, getNode, attachScrollIntent } = options;
+  const { root, state, getNode, attachScrollIntent, onContentAnchorsChanged } = options;
 
   function createField(fieldWidth: number, fieldHeight: number, fieldOffsetY: number) {
     const fieldEl = document.createElement('div');
@@ -80,9 +81,10 @@ export function createTiledRenderController(options: TiledRenderControllerOption
       const host = document.createElement('div');
       host.className = 'tiled-markdown-host';
       renderStreamdownMarkdown(host, node.content || '', { streaming: false }).then(() => {
-        state.annotations
-          .filter((annotation) => annotation.sourceNodeId === node.id)
-          .forEach((annotation) => applyAnnotationToContainer(host, annotation));
+        if (!host.isConnected) return;
+        const nodeAnnotations = state.annotations.filter((annotation) => annotation.sourceNodeId === node.id);
+        nodeAnnotations.forEach((annotation) => applyAnnotationToContainer(host, annotation));
+        if (nodeAnnotations.length > 0) onContentAnchorsChanged?.(node.id);
       });
       const sentinel = document.createElement('div');
       sentinel.className = 'tiled-bottom-sentinel';

@@ -72,6 +72,7 @@ export function validateFlow(flow: unknown, { requireEdges = true }: { requireEd
   const workspaceState = normalizeTiledWorkspaces(flow.workspaces, {
     nodes,
     edges,
+    annotations,
     activeWorkspaceId: flow.activeWorkspaceId,
   });
   const normalizedFlow = {
