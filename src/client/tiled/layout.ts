@@ -51,9 +51,10 @@ export function createTiledLayoutController(options: TiledLayoutControllerOption
     return annotations.filter((annotation) => annotation.sourceNodeId === focusedId || annotation.targetNodeId === focusedId);
   }
 
-  function getContextualLayouts(projection, workspace) {
+  function getContextualLayoutState(projection, workspace) {
     const relationIndex = buildTiledRelationIndex(state.nodes, state.edges, state.annotations);
-    return computeElasticTiledLayouts({
+    const anchors = getAnchors(projection, workspace);
+    const layouts = computeElasticTiledLayouts({
       columns: projection.columns || [],
       pageLayouts: projection.pageLayouts || {},
       nodes: state.nodes || [],
@@ -62,14 +63,27 @@ export function createTiledLayoutController(options: TiledLayoutControllerOption
       relationIndex,
       focusNodeId: workspace.focus?.nodeId || '',
       viewportHeight: root.clientHeight || 720,
-      anchors: getAnchors(projection, workspace),
+      anchors,
       mode: 'canonical',
     });
+    return { layouts, anchors, anchorModeSignature: getAnchorModeSignature(anchors) };
+  }
+
+  function getContextualLayouts(projection, workspace) {
+    return getContextualLayoutState(projection, workspace).layouts;
+  }
+
+  function getAnchorModeSignature(anchors) {
+    return Object.values(anchors?.annotationAnchors || {})
+      .map((anchor: any) => `${anchor.annotationId || ''}:${anchor.nodeId}:${anchor.visibility}`)
+      .sort()
+      .join('|');
   }
 
   return {
     getCurrentFieldOffsetY,
     getFieldGeometry,
+    getContextualLayoutState,
     getContextualLayouts,
   };
 }

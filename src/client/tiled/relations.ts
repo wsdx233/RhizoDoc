@@ -19,12 +19,20 @@ export function createTiledRelationsController(options: TiledRelationsController
     });
   }
 
-  function animate(duration = 320) {
+  function cancel() {
     if (pendingDrawFrame) {
       cancelAnimationFrame(pendingDrawFrame);
       pendingDrawFrame = 0;
     }
-    if (relationAnimationFrame) cancelAnimationFrame(relationAnimationFrame);
+    if (relationAnimationFrame) {
+      cancelAnimationFrame(relationAnimationFrame);
+      relationAnimationFrame = 0;
+    }
+    root.classList.remove('tiled-relations-animating');
+  }
+
+  function animate(duration = 320) {
+    cancel();
     root.classList.add('tiled-relations-animating');
     const start = performance.now();
     const tick = () => {
@@ -174,6 +182,7 @@ export function createTiledRelationsController(options: TiledRelationsController
 
   return {
     animate,
+    cancel,
     draw,
     scheduleDraw,
   };

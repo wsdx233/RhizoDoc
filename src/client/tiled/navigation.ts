@@ -1,4 +1,5 @@
 import { projectTiledColumns } from '../../shared/workspace.js';
+import type { TiledLayoutRefreshRequest } from './transition-policy.js';
 import { cssAttr } from '../utils.js';
 
 type TiledNavigationControllerOptions = {
@@ -6,7 +7,7 @@ type TiledNavigationControllerOptions = {
   state: any;
   getNode: (id: string) => any;
   ensureWorkspace: () => any;
-  refreshLayoutPositions: (options?: { animateRelations?: boolean; animateSections?: boolean; animateFocusedSection?: boolean; lockFocusedViewport?: boolean }) => void;
+  refreshLayoutPositions: (request?: TiledLayoutRefreshRequest) => void;
   runFocusedAction: (action: string) => void;
   isEditableTarget: (target: EventTarget | null) => boolean;
 };
@@ -73,10 +74,10 @@ export function createTiledNavigationController(options: TiledNavigationControll
     workspace.updatedAt = new Date().toISOString();
     const horizontalNavigation = key === 'ArrowLeft' || key === 'ArrowRight';
     if (horizontalNavigation) {
-      refreshLayoutPositions();
+      refreshLayoutPositions({ reason: 'focus-keyboard-horizontal' });
       requestAnimationFrame(() => scrollNodeIntoHorizontalView(nextNodeId));
     } else {
-      refreshLayoutPositions({ animateFocusedSection: false, lockFocusedViewport: true });
+      refreshLayoutPositions({ reason: 'focus-keyboard-vertical' });
       requestAnimationFrame(() => {
         root.querySelector(`[data-node-id="${cssAttr(nextNodeId)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
       });
@@ -122,7 +123,7 @@ export function createTiledNavigationController(options: TiledNavigationControll
     [column.pageIds[index], column.pageIds[swapIndex]] = [column.pageIds[swapIndex], column.pageIds[index]];
     workspace.focus = { workspaceId: workspace.id, region: 'columns', columnId: column.id, nodeId };
     workspace.updatedAt = new Date().toISOString();
-    refreshLayoutPositions({ animateFocusedSection: false, lockFocusedViewport: true });
+    refreshLayoutPositions({ reason: 'focus-keyboard-vertical' });
     requestAnimationFrame(() => {
       root.querySelector(`[data-node-id="${cssAttr(nodeId)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     });

@@ -11,6 +11,7 @@ export type TiledLayoutAnchor = {
   bottom: number;
   center: number;
   visibility: TiledAnchorVisibility;
+  offscreenDistance?: number;
   annotationId?: string;
   targetNodeId?: string;
 };
@@ -52,25 +53,17 @@ function findTiledSection(root: HTMLElement, nodeId: string) {
   return root.querySelector(`[data-node-id="${cssAttr(nodeId)}"]`) as HTMLElement | null;
 }
 
-function measureVisibleContentAnchor(root: HTMLElement, section: HTMLElement, fallbackHeight: number): TiledLayoutAnchor | null {
+function measureVisibleContentAnchor(_root: HTMLElement, section: HTMLElement, fallbackHeight: number): TiledLayoutAnchor | null {
   const content = section.querySelector('.tiled-content') as HTMLElement | null;
-  if (!content) return null;
-  const sectionRect = section.getBoundingClientRect();
-  const contentRect = content.getBoundingClientRect();
-  const rootRect = root.getBoundingClientRect();
-  const visibleTop = Math.max(contentRect.top, rootRect.top, sectionRect.top);
-  const visibleBottom = Math.min(contentRect.bottom, rootRect.bottom, sectionRect.bottom);
-  if (visibleBottom <= visibleTop + 1) return null;
-  return createAnchorFromViewportInterval(section, 'visible-content', visibleTop, visibleBottom, fallbackHeight);
+  if (!content || content.clientHeight <= 1) return null;
+  const contentTop = getElementTopInSection(content, section);
+  return createAnchorFromSectionInterval(section, 'visible-content', contentTop, contentTop + content.clientHeight, fallbackHeight);
 }
 
-function measureVisiblePanelAnchor(root: HTMLElement, section: HTMLElement, fallbackHeight: number): TiledLayoutAnchor | null {
-  const sectionRect = section.getBoundingClientRect();
-  const rootRect = root.getBoundingClientRect();
-  const visibleTop = Math.max(sectionRect.top, rootRect.top);
-  const visibleBottom = Math.min(sectionRect.bottom, rootRect.bottom);
-  if (visibleBottom <= visibleTop + 1) return null;
-  return createAnchorFromViewportInterval(section, 'visible-panel', visibleTop, visibleBottom, fallbackHeight);
+function measureVisiblePanelAnchor(_root: HTMLElement, section: HTMLElement, fallbackHeight: number): TiledLayoutAnchor | null {
+  const height = section.offsetHeight || fallbackHeight;
+  if (height <= 1) return null;
+  return createAnchorFromSectionInterval(section, 'visible-panel', 0, height, fallbackHeight);
 }
 
 function measureAnnotationAnchor(root: HTMLElement, annotation: RhizoAnnotation): TiledLayoutAnchor | null {
@@ -80,44 +73,52 @@ function measureAnnotationAnchor(root: HTMLElement, annotation: RhizoAnnotation)
   const element = section.querySelector(`[data-annotation-id="${cssAttr(annotation.id)}"]`) as HTMLElement | null;
   if (!element) return null;
 
-  const sectionRect = section.getBoundingClientRect();
-  const elementRect = element.getBoundingClientRect();
-  const rootRect = root.getBoundingClientRect();
   const content = element.closest('.tiled-content') as HTMLElement | null;
-  const contentRect = content?.getBoundingClientRect();
-  const clipTop = Math.max(rootRect.top, sectionRect.top, contentRect?.top ?? sectionRect.top);
-  const clipBottom = Math.min(rootRect.bottom, sectionRect.bottom, contentRect?.bottom ?? sectionRect.bottom);
-  if (clipBottom <= clipTop + 1) return null;
+  if (!content || content.clientHeight <= 1) return null;
 
-  const visibleTop = Math.max(elementRect.top, clipTop);
-  const visibleBottom = Math.min(elementRect.bottom, clipBottom);
-  if (visibleBottom > visibleTop + 1) {
-    return createAnchorFromViewportInterval(section, 'annotation-span', visibleTop, visibleBottom, section.offsetHeight || 0, annotation, 'visible');
+  const contentTopInSection = getElementTopInSection(content, section);
+  const elementRect = element.getBoundingClientRect();
+  const contentRect = content.getBoundingClientRect();
+  const elementTopInContent = elementRect.top - contentRect.top + content.scrollTop;
+  const elementBottomInContent = elementTopInContent + elementRect.height;
+  const viewportTopInContent = content.scrollTop;
+  const viewportBottomInContent = content.scrollTop + content.clientHeight;
+
+  const visibleTopInContent = Math.max(elementTopInContent, viewportTopInContent);
+  const visibleBottomInContent = Math.min(elementBottomInContent, viewportBottomInContent);
+  if (visibleBottomInContent > visibleTopInContent + 1) {
+    return createAnchorFromSectionInterval(
+      section,
+      'annotation-span',
+      contentTopInSection + visibleTopInContent - content.scrollTop,
+      contentTopInSection + visibleBottomInContent - content.scrollTop,
+      section.offsetHeight || 0,
+      annotation,
+      'visible',
+    );
   }
 
-  const elementCenter = elementRect.top + elementRect.height / 2;
-  const visibility: TiledAnchorVisibility = elementRect.bottom < clipTop ? 'above-viewport' : 'below-viewport';
-  const clampedCenter = visibility === 'above-viewport'
-    ? clipTop
-    : elementRect.top > clipBottom
-      ? clipBottom
-      : clamp(elementCenter, clipTop, clipBottom);
-  return createAnchorFromViewportInterval(section, 'annotation-span', clampedCenter, clampedCenter, section.offsetHeight || 0, annotation, visibility);
+  const visibility: TiledAnchorVisibility = elementBottomInContent < viewportTopInContent ? 'above-viewport' : 'below-viewport';
+  const clampedCenterInSection = contentTopInSection + (visibility === 'above-viewport' ? 0 : content.clientHeight);
+  const offscreenDistance = visibility === 'above-viewport'
+    ? Math.max(0, viewportTopInContent - elementBottomInContent)
+    : Math.max(0, elementTopInContent - viewportBottomInContent);
+  return createAnchorFromSectionInterval(section, 'annotation-span', clampedCenterInSection, clampedCenterInSection, section.offsetHeight || 0, annotation, visibility, offscreenDistance);
 }
 
-function createAnchorFromViewportInterval(
+function createAnchorFromSectionInterval(
   section: HTMLElement,
   kind: TiledAnchorKind,
-  viewportTop: number,
-  viewportBottom: number,
+  sectionTop: number,
+  sectionBottom: number,
   fallbackHeight: number,
   annotation?: RhizoAnnotation,
   visibility: TiledAnchorVisibility = 'visible',
+  offscreenDistance?: number,
 ): TiledLayoutAnchor {
-  const sectionRect = section.getBoundingClientRect();
-  const height = section.offsetHeight || fallbackHeight || Math.max(1, sectionRect.height);
-  const top = clamp(viewportTop - sectionRect.top, 0, height);
-  const bottom = clamp(viewportBottom - sectionRect.top, 0, height);
+  const height = section.offsetHeight || fallbackHeight || 1;
+  const top = clamp(sectionTop, 0, height);
+  const bottom = clamp(sectionBottom, 0, height);
   const center = clamp((top + bottom) / 2, 0, height);
   return {
     nodeId: annotation?.sourceNodeId || section.dataset.nodeId || '',
@@ -126,7 +127,12 @@ function createAnchorFromViewportInterval(
     bottom,
     center,
     visibility,
+    offscreenDistance,
     annotationId: annotation?.id,
     targetNodeId: annotation?.targetNodeId,
   };
+}
+
+function getElementTopInSection(element: HTMLElement, section: HTMLElement) {
+  return element.getBoundingClientRect().top - section.getBoundingClientRect().top;
 }

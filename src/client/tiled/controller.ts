@@ -5,6 +5,7 @@ import { createTiledNavigationController } from './navigation.js';
 import { createTiledRelationsController } from './relations.js';
 import { createTiledRenderController } from './render.js';
 import { createTiledTailScrollController } from './tail-scroll.js';
+import { resolveTiledLayoutTransaction, type TiledLayoutRefreshRequest } from './transition-policy.js';
 import { clamp, cssAttr } from '../utils.js';
 import {
   DEFAULT_TILED_COLUMN_WIDTH,
@@ -24,13 +25,6 @@ type TiledWorkspaceControllerOptions = {
   getNode: (id: string) => any;
   openFullscreen: (id: string) => void;
   isEditableTarget: (target: EventTarget | null) => boolean;
-};
-
-type TiledLayoutRefreshOptions = {
-  animateRelations?: boolean;
-  animateSections?: boolean;
-  animateFocusedSection?: boolean;
-  lockFocusedViewport?: boolean;
 };
 
 export function createTiledWorkspaceController(options: TiledWorkspaceControllerOptions) {
@@ -75,6 +69,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     const previousScrollLeft = root.scrollLeft;
     const previousScrollTop = root.scrollTop;
     const previousFieldOffsetY = layoutEngine.getCurrentFieldOffsetY();
+    relations.cancel();
     unmountStreamdownContent();
 
     if (state.nodes.length === 0) {
@@ -91,7 +86,8 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
       return;
     }
 
-    const layouts = layoutEngine.getContextualLayouts(projection, workspace);
+    const contextualLayout = layoutEngine.getContextualLayoutState(projection, workspace);
+    const layouts = contextualLayout.layouts;
     const fieldGeometry = layoutEngine.getFieldGeometry(projection.columns, layouts);
     const { fieldOffsetY, fieldWidth, fieldHeight } = fieldGeometry;
 
@@ -116,25 +112,27 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     relations.scheduleDraw();
   }
 
-  function refreshLayoutPositions(options: TiledLayoutRefreshOptions = {}) {
+  function refreshLayoutPositions(request: TiledLayoutRefreshRequest = {}) {
+    const transaction = resolveTiledLayoutTransaction(request);
     const workspace = ensureWorkspace();
     const fieldEl = root.querySelector('.tiled-field') as HTMLElement | null;
     if (!fieldEl || state.nodes.length === 0) return;
-    const immediateSectionLayout = options.animateSections === false;
-    const stableFocusedSection = options.animateFocusedSection === false;
-    if (immediateSectionLayout || stableFocusedSection) {
-      root.classList.toggle('tiled-layout-immediate', immediateSectionLayout);
-      root.classList.toggle('tiled-layout-stable-focus', stableFocusedSection);
-      void root.offsetHeight;
-    }
-    const lockedFocusedNodeId = options.lockFocusedViewport ? workspace.focus?.nodeId || '' : '';
+    const lockedFocusedNodeId = transaction.viewportLock === 'focused-section-top' ? workspace.focus?.nodeId || '' : '';
     const lockedFocusedViewportTop = lockedFocusedNodeId ? getSectionViewportTop(lockedFocusedNodeId) : NaN;
     const previousScrollLeft = root.scrollLeft;
     const previousScrollTop = root.scrollTop;
     const previousFieldOffsetY = layoutEngine.getCurrentFieldOffsetY();
     const projection = projectTiledColumns(state.nodes, state.edges, workspace, state.annotations || []);
     workspace.columns = projection.columns;
-    const layouts = layoutEngine.getContextualLayouts(projection, workspace);
+    const contextualLayout = layoutEngine.getContextualLayoutState(projection, workspace);
+    const layouts = contextualLayout.layouts;
+    const immediateSectionLayout = transaction.sectionMotion === 'immediate';
+    const stableFocusedSection = transaction.focusedMotion === 'stable';
+    if (immediateSectionLayout || stableFocusedSection) {
+      root.classList.toggle('tiled-layout-immediate', immediateSectionLayout);
+      root.classList.toggle('tiled-layout-stable-focus', stableFocusedSection);
+      void root.offsetHeight;
+    }
     const { fieldOffsetY, fieldWidth, fieldHeight } = layoutEngine.getFieldGeometry(projection.columns, layouts);
     const fieldOffsetDelta = fieldOffsetY - previousFieldOffsetY;
     const stageFieldOffset = !immediateSectionLayout && Math.abs(fieldOffsetDelta) > 0.5;
@@ -181,7 +179,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
       if (Number.isFinite(currentFocusedViewportTop)) root.scrollTop += currentFocusedViewportTop - lockedFocusedViewportTop;
     }
     requestAnimationFrame(() => {
-      if (options.animateRelations === false) relations.scheduleDraw();
+      if (transaction.relationMotion === 'final-only') relations.scheduleDraw();
       else relations.animate();
       if (immediateSectionLayout) root.classList.remove('tiled-layout-immediate');
       if (stableFocusedSection) root.classList.remove('tiled-layout-stable-focus');
@@ -336,7 +334,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     if (pendingResizeLayoutRefresh) return;
     pendingResizeLayoutRefresh = requestAnimationFrame(() => {
       pendingResizeLayoutRefresh = 0;
-      if (state.activeView === 'tiled') refreshLayoutPositions({ animateRelations: false, animateSections: false });
+      if (state.activeView === 'tiled') refreshLayoutPositions({ reason: 'resize' });
     });
   }
 
@@ -345,14 +343,14 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
       cancelAnimationFrame(pendingResizeLayoutRefresh);
       pendingResizeLayoutRefresh = 0;
     }
-    if (state.activeView === 'tiled') refreshLayoutPositions({ animateRelations: false, animateSections: false });
+    if (state.activeView === 'tiled') refreshLayoutPositions({ reason: 'resize' });
   }
 
   function scheduleContentScrollLayoutRefresh() {
     if (pendingContentScrollLayoutRefresh) return;
     pendingContentScrollLayoutRefresh = requestAnimationFrame(() => {
       pendingContentScrollLayoutRefresh = 0;
-      if (state.activeView === 'tiled') refreshLayoutPositions({ animateRelations: false, animateSections: false, lockFocusedViewport: true });
+      if (state.activeView === 'tiled') refreshLayoutPositions({ reason: 'content-scroll' });
     });
   }
 
@@ -373,7 +371,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     if (pendingAnchorMaterializedRefresh) return;
     pendingAnchorMaterializedRefresh = requestAnimationFrame(() => {
       pendingAnchorMaterializedRefresh = 0;
-      if (state.activeView === 'tiled') refreshLayoutPositions({ animateRelations: false, animateSections: false, lockFocusedViewport: true });
+      if (state.activeView === 'tiled') refreshLayoutPositions({ reason: 'annotation-materialized' });
     });
   }
 
@@ -398,7 +396,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     const targetId = annotated?.dataset.refId;
     if (targetId) {
       event.preventDefault();
-      focusWorkspaceNode(targetId, { scroll: true });
+      focusWorkspaceNode(targetId, { scroll: true, layoutRequest: { reason: 'annotation-click' } });
       return;
     }
 
@@ -424,7 +422,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     workspace.focus = { workspaceId: workspace.id, region: 'columns', nodeId };
     workspace.updatedAt = new Date().toISOString();
     if (action === 'section-title-toggle') render();
-    else refreshLayoutPositions();
+    else refreshLayoutPositions({ reason: 'panel-action' });
   }
 
   function focusSection(section, options: { direct?: boolean } = {}) {
@@ -434,7 +432,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     focusWorkspaceNode(nodeId, {
       scroll: false,
       forceRefresh: changed,
-      layoutOptions: options.direct ? {} : { animateFocusedSection: false, lockFocusedViewport: true },
+      layoutRequest: { reason: options.direct ? 'focus-click' : 'focus-programmatic' },
     });
     if (!changed) {
       root.querySelectorAll('.tiled-section.focused').forEach((item) => item.classList.remove('focused'));
@@ -443,7 +441,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     }
   }
 
-  function focusWorkspaceNode(nodeId, { scroll = false, forceRefresh = true, layoutOptions = { animateFocusedSection: false, lockFocusedViewport: true } as TiledLayoutRefreshOptions } = {}) {
+  function focusWorkspaceNode(nodeId, { scroll = false, forceRefresh = true, layoutRequest = { reason: 'focus-programmatic' } as TiledLayoutRefreshRequest } = {}) {
     if (!getNode(nodeId)) return false;
     const workspace = ensureWorkspace();
     const projection = projectTiledColumns(state.nodes, state.edges, workspace, state.annotations || []);
@@ -453,7 +451,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     workspace.updatedAt = new Date().toISOString();
 
     const existingSection = root.querySelector(`[data-node-id="${cssAttr(nodeId)}"]`);
-    if (existingSection && forceRefresh) refreshLayoutPositions(layoutOptions);
+    if (existingSection && forceRefresh) refreshLayoutPositions(layoutRequest);
     else if (!existingSection) render();
 
     if (scroll) {
@@ -492,7 +490,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
       const delta = action === 'column-widen' ? 60 : -60;
       column.width = clamp(Number(column.width) + delta, MIN_TILED_COLUMN_WIDTH, MAX_TILED_COLUMN_WIDTH);
       workspace.updatedAt = new Date().toISOString();
-      refreshLayoutPositions();
+      refreshLayoutPositions({ reason: 'column-action' });
       return;
     }
 
@@ -509,7 +507,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
     }
     workspace.updatedAt = new Date().toISOString();
     if (action === 'section-title-toggle') render();
-    else refreshLayoutPositions();
+    else refreshLayoutPositions({ reason: 'panel-action' });
   }
 
   function isTitleOnly(nodeId) {

@@ -61,7 +61,7 @@ function nodeAnchors(values: Record<string, number>) {
   };
 }
 
-function anchorRegistry({ node = {}, annotations = {} }: { node?: Record<string, number>; annotations?: Record<string, { nodeId: string; center: number; targetNodeId?: string; visibility?: 'visible' | 'above-viewport' | 'below-viewport' }> }) {
+function anchorRegistry({ node = {}, annotations = {} }: { node?: Record<string, number>; annotations?: Record<string, { nodeId: string; center: number; targetNodeId?: string; visibility?: 'visible' | 'above-viewport' | 'below-viewport'; offscreenDistance?: number }> }) {
   return {
     nodeAnchors: nodeAnchors(node).nodeAnchors,
     annotationAnchors: Object.fromEntries(Object.entries(annotations).map(([annotationId, anchor]) => [annotationId, {
@@ -71,6 +71,7 @@ function anchorRegistry({ node = {}, annotations = {} }: { node?: Record<string,
       bottom: anchor.center,
       center: anchor.center,
       visibility: anchor.visibility || 'visible',
+      offscreenDistance: anchor.offscreenDistance,
       annotationId,
       targetNodeId: anchor.targetNodeId,
     }])),
@@ -107,7 +108,7 @@ describe('computeElasticTiledLayouts', () => {
     expect(byId.get('b')!.extraGapBefore).toBeGreaterThan(0);
   });
 
-  it('does not let offscreen annotation anchors pull layout to viewport boundaries', () => {
+  it('uses a weaker bounded cue when an annotation span is below the viewport', () => {
     const nodes = [node('source'), node('target')];
     const columns = [column('depth-0', 0, ['source']), column('depth-1', 1, ['target'])];
     const pageLayouts = {
@@ -129,7 +130,101 @@ describe('computeElasticTiledLayouts', () => {
       }),
     });
 
-    expect(result.find((item) => item.nodeId === 'target')!.y).toBeCloseTo(52);
+    const target = result.find((item) => item.nodeId === 'target')!;
+    expect(target.y).toBeGreaterThan(500);
+    expect(target.y).toBeLessThan(590);
+    expect(target.relationPull).toBeLessThan(600);
+  });
+
+  it('uses a weaker bounded cue when an annotation span is above the viewport', () => {
+    const nodes = [node('source'), node('target')];
+    const columns = [column('depth-0', 0, ['source']), column('depth-1', 1, ['target'])];
+    const pageLayouts = {
+      source: layout('source', 'depth-0', 0, 0, 420, 240),
+      target: layout('target', 'depth-1', 1, 0, 620),
+    };
+
+    const result = computeElasticTiledLayouts({
+      columns,
+      pageLayouts,
+      nodes,
+      edges: [],
+      annotations: [annotation('source-target', 'source', 'target')],
+      focusNodeId: 'source',
+      viewportHeight: 720,
+      anchors: anchorRegistry({
+        node: { source: 200 },
+        annotations: { 'source-target': { nodeId: 'source', center: 0, targetNodeId: 'target', visibility: 'above-viewport' } },
+      }),
+    });
+
+    const target = result.find((item) => item.nodeId === 'target')!;
+    expect(target.y).toBeGreaterThan(330);
+    expect(target.y).toBeLessThan(430);
+    expect(target.y).toBeLessThan(target.baseY);
+  });
+
+  it('allows nearest offscreen cues to coexist with visible span anchors', () => {
+    const nodes = [node('source'), node('offscreen'), node('visible')];
+    const columns = [column('depth-0', 0, ['source']), column('depth-1', 1, ['offscreen', 'visible'])];
+    const pageLayouts = {
+      source: layout('source', 'depth-0', 0, 0, 420, 240),
+      offscreen: layout('offscreen', 'depth-1', 1, 0, 52),
+      visible: layout('visible', 'depth-1', 1, 1, 166),
+    };
+
+    const result = computeElasticTiledLayouts({
+      columns,
+      pageLayouts,
+      nodes,
+      edges: [],
+      annotations: [annotation('source-offscreen', 'source', 'offscreen'), annotation('source-visible', 'source', 'visible')],
+      focusNodeId: 'source',
+      viewportHeight: 720,
+      anchors: anchorRegistry({
+        annotations: {
+          'source-offscreen': { nodeId: 'source', center: 240, targetNodeId: 'offscreen', visibility: 'below-viewport', offscreenDistance: 120 },
+          'source-visible': { nodeId: 'source', center: 200, targetNodeId: 'visible' },
+        },
+      }),
+    });
+    const byId = new Map(result.map((item) => [item.nodeId, item]));
+
+    expect(byId.get('offscreen')!.y).toBeGreaterThan(400);
+    expect(byId.get('offscreen')!.y).toBeLessThan(byId.get('visible')!.y);
+    expect(byId.get('offscreen')!.relationPull).toBeLessThan(600);
+    expect(byId.get('visible')!.y).toBeGreaterThan(500);
+  });
+
+  it('uses the nearest offscreen cue while keeping farther annotations as weaker node-level fallback', () => {
+    const nodes = [node('source'), node('far'), node('near')];
+    const columns = [column('depth-0', 0, ['source']), column('depth-1', 1, ['far', 'near'])];
+    const pageLayouts = {
+      source: layout('source', 'depth-0', 0, 0, 420, 240),
+      far: layout('far', 'depth-1', 1, 0, 52),
+      near: layout('near', 'depth-1', 1, 1, 166),
+    };
+
+    const result = computeElasticTiledLayouts({
+      columns,
+      pageLayouts,
+      nodes,
+      edges: [],
+      annotations: [annotation('source-far', 'source', 'far'), annotation('source-near', 'source', 'near')],
+      focusNodeId: 'source',
+      viewportHeight: 720,
+      anchors: anchorRegistry({
+        annotations: {
+          'source-far': { nodeId: 'source', center: 240, targetNodeId: 'far', visibility: 'below-viewport', offscreenDistance: 400 },
+          'source-near': { nodeId: 'source', center: 240, targetNodeId: 'near', visibility: 'below-viewport', offscreenDistance: 20 },
+        },
+      }),
+    });
+    const byId = new Map(result.map((item) => [item.nodeId, item]));
+
+    expect(byId.get('far')!.relationPull).toBeGreaterThan(200);
+    expect(byId.get('far')!.relationPull).toBeLessThan(byId.get('near')!.relationPull);
+    expect(byId.get('near')!.y).toBeGreaterThan(500);
   });
 
   it('uses visible annotation span anchors before generic node anchors for active annotation layout', () => {

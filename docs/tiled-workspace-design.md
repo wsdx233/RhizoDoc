@@ -162,12 +162,12 @@ Anchor priority:
 
 This distinction matters for long panels: parent/context alignment should follow what the reader is currently seeing inside the focused panel, not the full card's center. Annotation relations should align to the highlighted source span when available.
 
-Visibility is part of the anchor contract:
+Visibility is part of the annotation-span anchor contract:
 
-- `visible`: the semantic span is actually visible and may participate in layout.
-- `above-viewport` / `below-viewport`: the span exists but is outside the current reading viewport. It may be used for cues, but it must not pull target panels or consume elastic whitespace.
+- `visible`: the semantic span is actually visible and may be used as a precise span-level layout anchor.
+- `above-viewport` / `below-viewport`: the span exists but is outside the current reading viewport. Its clamped top/bottom position is an offscreen cue anchor, not a real visible span anchor.
 
-Clamping an offscreen annotation to the top/bottom boundary is a visual cue only. It is not a real layout anchor.
+An offscreen annotation relation must not disappear from layout, but it must also not masquerade as an exact visible span. The relation degrades from a precise high-weight span anchor to a weaker bounded endpoint. Only sparse nearest-above / nearest-below annotations may use the clamped top/bottom cue position; all other offscreen annotations fall back to node-level anchors such as the focused visible-content interval, visible panel interval, or panel center. This preserves source/target direction without letting hidden spans pretend to be visible exact anchors.
 
 ## Focus Lens
 
@@ -195,7 +195,9 @@ Annotation relations:
 
 - Annotation source/target lines inherit annotation color.
 - Prefer exact highlighted mark as source anchor when visible.
-- Offscreen annotation marks should become edge/cue state, not layout pulls; they must not be clamped to viewport boundaries as if they were visible anchors.
+- Offscreen annotation marks should become bounded edge/cue state and should not be clamped to viewport boundaries as if they were visible exact span anchors.
+- The annotation relation itself still participates with reduced weight through node-level fallback anchors, so related panels do not snap back to the top of their column when a span scrolls offscreen.
+- Offscreen cue positions are sparse: only nearest above/below marks may use top/bottom cue anchors; other offscreen relations use node-level fallback anchors.
 - Stronger than structural edges for focus-context layout scoring.
 - Used to pull annotation-related panels into view around the focused panel.
 
