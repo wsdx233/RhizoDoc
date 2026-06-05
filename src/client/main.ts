@@ -2,7 +2,7 @@ import './styles.css';
 import { fetchJson } from './api.js';
 import { demoDocument } from './demo.js';
 import { byId, collectDomRefs } from './dom.js';
-import { positionContextMenu } from './floating.js';
+import { startContextMenuAutoUpdate } from './floating.js';
 import { createFullscreenController } from './fullscreen-controller.js';
 import { createGraphController } from './graph/controller.js';
 import { createLLMGenerationController } from './llm/generation.js';
@@ -76,6 +76,7 @@ const DOM = collectDomRefs();
 let llmGeneration;
 let fullscreen;
 let serverFlows;
+let cleanupMenuAutoUpdate: (() => void) | null = null;
 const graph = createGraphController({
   dom: DOM,
   state,
@@ -395,6 +396,8 @@ async function handleFlowFile(file) {
 }
 
 function hideMenus() {
+  cleanupMenuAutoUpdate?.();
+  cleanupMenuAutoUpdate = null;
   DOM.nodeMenu.style.display = 'none';
   DOM.canvasMenu.style.display = 'none';
 }
@@ -474,8 +477,10 @@ function setMenuItemLabel(menuItem, iconName, label) {
 }
 
 function showMenu(menu, clientX, clientY) {
+  cleanupMenuAutoUpdate?.();
+  cleanupMenuAutoUpdate = null;
   menu.style.display = 'flex';
-  void positionContextMenu(menu, clientX, clientY);
+  cleanupMenuAutoUpdate = startContextMenuAutoUpdate(menu, clientX, clientY);
 }
 
 function isFlowObject(value) {

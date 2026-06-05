@@ -1,5 +1,5 @@
 import type { RhizoDomRefs } from './dom.js';
-import { positionSelectionTooltip } from './floating.js';
+import { startElementListSelectionTooltipAutoUpdate, startRangeSelectionTooltipAutoUpdate } from './floating.js';
 import { forEachLogicalTextSegment, getLogicalRangeSelection } from './logical-text.js';
 import { closestElement, cssAttr } from './utils.js';
 
@@ -14,6 +14,17 @@ type SelectionControllerOptions = {
 
 export function createSelectionController(options: SelectionControllerOptions) {
   const { dom, state, getNode, nodeRendering, hideMenus, submitSelection } = options;
+  let cleanupTooltipAutoUpdate: (() => void) | null = null;
+
+  function stopTooltipAutoUpdate() {
+    cleanupTooltipAutoUpdate?.();
+    cleanupTooltipAutoUpdate = null;
+  }
+
+  function restartTooltipAutoUpdate(cleanup: () => void) {
+    stopTooltipAutoUpdate();
+    cleanupTooltipAutoUpdate = cleanup;
+  }
 
   function handleSelection() {
     if (state.isDragging || state.isDraggingNode || state.isResizing || state.isMarqueeSelecting || state.isMoveMode || state.isMultiSelectMode) return;
@@ -57,7 +68,7 @@ export function createSelectionController(options: SelectionControllerOptions) {
     if (state.isNativeTextSelecting) return;
 
     dom.tooltip.style.display = 'flex';
-    void positionSelectionTooltip(dom.tooltip, range, { contextElement: contentEl });
+    restartTooltipAutoUpdate(startRangeSelectionTooltipAutoUpdate(dom.tooltip, range, { contextElement: contentEl }));
     dom.promptInput.value = '';
   }
 
@@ -70,7 +81,8 @@ export function createSelectionController(options: SelectionControllerOptions) {
 
   function lockNativeSelectionMenu() {
     if (!shouldLockNativeSelectionMenu()) return;
-    retainTemporarySelection();
+    const container = retainTemporarySelection();
+    if (container) restartTooltipAutoUpdate(startElementListSelectionTooltipAutoUpdate(dom.tooltip, () => getRetainedSelectionAnchors(container), { contextElement: container }));
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) return;
     state.keepTooltipAfterSelectionClear = true;
@@ -79,16 +91,25 @@ export function createSelectionController(options: SelectionControllerOptions) {
 
   function retainTemporarySelection() {
     const selection = state.currentSelection;
-    if (!selection?.parentNodeId || !selection.text) return;
+    if (!selection?.parentNodeId || !selection.text) return null;
     clearTemporarySelection();
 
-    const container = selection.source === 'fullscreen' && state.fullscreenNodeId === selection.parentNodeId
+    const container = getSelectionContainer(selection);
+    if (!container) return null;
+    wrapTemporarySelectionByOffset(container, Number(selection.start), Number(selection.length));
+    return container;
+  }
+
+  function getSelectionContainer(selection = state.currentSelection): Element | null {
+    return selection.source === 'fullscreen' && state.fullscreenNodeId === selection.parentNodeId
       ? dom.fsContent
       : selection.source === 'tiled'
         ? dom.tiledWorkspace.querySelector(`[data-node-id="${cssAttr(selection.parentNodeId)}"] .tiled-content`)
-        : document.getElementById(selection.parentNodeId)?.querySelector('.node-content');
-    if (!container) return;
-    wrapTemporarySelectionByOffset(container, Number(selection.start), Number(selection.length));
+        : document.getElementById(selection.parentNodeId)?.querySelector('.node-content') || null;
+  }
+
+  function getRetainedSelectionAnchors(container: Element) {
+    return Array.from(container.querySelectorAll('.retained-selection, .math-node.retained-math-selection, .katex.retained-math-selection'));
   }
 
   function wrapTemporarySelectionByOffset(container: Element, start: number, length: number) {
@@ -146,6 +167,7 @@ export function createSelectionController(options: SelectionControllerOptions) {
   function hideTooltip({ preserveNativeSelection = false }: any = {}) {
     const deferredNodeId = state.currentSelection?.parentNodeId || null;
     if (!preserveNativeSelection) state.isNativeTextSelecting = false;
+    stopTooltipAutoUpdate();
     clearTemporarySelection();
     dom.tooltip.style.display = 'none';
     dom.tooltip.classList.remove('focus');
