@@ -19,10 +19,10 @@ export function getTiledFocusRelationPolicy(
   if (candidate.kind === 'annotation') {
     return {
       role: 'annotation-jump',
-      participatesInLayout: true,
-      active: true,
+      participatesInLayout: candidate.annotationDirection !== 'target-to-source',
+      active: candidate.annotationDirection !== 'target-to-source',
       layoutWeight: candidate.weight + 1480,
-      displacement: 'exact',
+      displacement: candidate.annotationDirection === 'target-to-source' ? 'none' : 'exact',
     };
   }
 

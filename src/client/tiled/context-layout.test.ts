@@ -157,7 +157,7 @@ describe('computeElasticTiledLayouts', () => {
     expect(result.find((item) => item.nodeId === 'target')!.y).toBeGreaterThan(500);
   });
 
-  it('uses source annotation span as the target endpoint when annotation focus is reversed', () => {
+  it('does not let reverse annotation focus pull the source panel by its annotation span', () => {
     const nodes = [node('source'), node('target')];
     const columns = [column('depth-0', 0, ['source']), column('depth-1', 1, ['target'])];
     const pageLayouts = {
@@ -180,11 +180,10 @@ describe('computeElasticTiledLayouts', () => {
     });
 
     const sourceY = result.find((item) => item.nodeId === 'source')!.y;
-    expect(sourceY).toBeGreaterThan(300);
-    expect(sourceY).toBeLessThan(550);
+    expect(sourceY).toBeCloseTo(52);
   });
 
-  it('solves columns from a snapshot so left and right neighbors can align symmetrically around focus', () => {
+  it('pulls forward annotation targets without pulling reverse annotation sources', () => {
     const nodes = [node('left'), node('focus'), node('right')];
     const columns = [column('depth-0', 0, ['left']), column('depth-1', 1, ['focus']), column('depth-2', 2, ['right'])];
     const pageLayouts = {
@@ -211,9 +210,8 @@ describe('computeElasticTiledLayouts', () => {
     });
     const byId = new Map(result.map((item) => [item.nodeId, item]));
 
-    expect(byId.get('left')!.y).toBeGreaterThan(52);
+    expect(byId.get('left')!.y).toBeCloseTo(52);
     expect(byId.get('right')!.y).toBeGreaterThan(52);
-    expect(Math.abs(byId.get('left')!.y - byId.get('right')!.y)).toBeLessThan(3);
   });
 
   it('ignores previous rendered positions in canonical mode but uses them in interactive mode', () => {

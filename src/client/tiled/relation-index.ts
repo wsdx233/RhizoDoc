@@ -8,6 +8,7 @@ export type TiledRelationCandidate = {
   kind: TiledRelationKind;
   weight: number;
   annotationId?: string;
+  annotationDirection?: 'source-to-target' | 'target-to-source';
   structuralDirection?: 'parent-to-child' | 'child-to-parent';
 };
 
@@ -63,6 +64,7 @@ export function buildTiledRelationIndex(
       kind: 'annotation',
       weight: ANNOTATION_WEIGHT,
       annotationId: annotation.id,
+      annotationDirection: 'source-to-target',
     });
     addCandidate({
       sourceId: annotation.targetNodeId,
@@ -70,6 +72,7 @@ export function buildTiledRelationIndex(
       kind: 'annotation',
       weight: ANNOTATION_WEIGHT - 10,
       annotationId: annotation.id,
+      annotationDirection: 'target-to-source',
     });
   }
 

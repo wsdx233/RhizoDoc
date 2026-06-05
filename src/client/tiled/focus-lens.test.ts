@@ -23,6 +23,15 @@ describe('getTiledFocusRelationPolicy', () => {
     expect(policy.layoutWeight).toBeGreaterThan(1000);
   });
 
+  it('keeps reverse annotation relations out of layout', () => {
+    const policy = getTiledFocusRelationPolicy(candidate({ kind: 'annotation', annotationId: 'note', annotationDirection: 'target-to-source', weight: 150 }), 'focus');
+
+    expect(policy.role).toBe('annotation-jump');
+    expect(policy.participatesInLayout).toBe(false);
+    expect(policy.active).toBe(false);
+    expect(policy.displacement).toBe('none');
+  });
+
   it('classifies focused child-to-parent structural links as active paths', () => {
     const policy = getTiledFocusRelationPolicy(candidate({ structuralDirection: 'child-to-parent' }), 'focus');
 
