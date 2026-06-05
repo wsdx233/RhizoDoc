@@ -227,6 +227,37 @@ describe('computeElasticTiledLayouts', () => {
     expect(byId.get('near')!.y).toBeGreaterThan(500);
   });
 
+  it('decays far offscreen span refinements while retaining a weak base relation', () => {
+    const nodes = [node('source'), node('far'), node('near')];
+    const columns = [column('depth-0', 0, ['source']), column('depth-1', 1, ['far', 'near'])];
+    const pageLayouts = {
+      source: layout('source', 'depth-0', 0, 0, 100, 240),
+      far: layout('far', 'depth-1', 1, 0, 52),
+      near: layout('near', 'depth-1', 1, 1, 166),
+    };
+
+    const result = computeElasticTiledLayouts({
+      columns,
+      pageLayouts,
+      nodes,
+      edges: [],
+      annotations: [annotation('source-far', 'source', 'far'), annotation('source-near', 'source', 'near')],
+      focusNodeId: 'source',
+      viewportHeight: 720,
+      anchors: anchorRegistry({
+        annotations: {
+          'source-far': { nodeId: 'source', center: 240, targetNodeId: 'far', visibility: 'below-viewport', offscreenDistance: 400 },
+          'source-near': { nodeId: 'source', center: 240, targetNodeId: 'near', visibility: 'below-viewport', offscreenDistance: 20 },
+        },
+      }),
+    });
+    const byId = new Map(result.map((item) => [item.nodeId, item]));
+
+    expect(byId.get('far')!.y).toBeGreaterThan(byId.get('far')!.baseY + 80);
+    expect(byId.get('far')!.y).toBeLessThan(byId.get('near')!.y);
+    expect(byId.get('far')!.relationPull).toBeLessThan(180);
+  });
+
   it('uses visible annotation span anchors before generic node anchors for active annotation layout', () => {
     const nodes = [node('source'), node('target')];
     const columns = [column('depth-0', 0, ['source']), column('depth-1', 1, ['target'])];

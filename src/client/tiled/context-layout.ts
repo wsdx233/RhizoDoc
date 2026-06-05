@@ -1,5 +1,5 @@
 import type { RhizoAnnotation, RhizoEdge, RhizoNode, TiledColumn, TiledPageLayout } from '../../shared/types.js';
-import type { TiledAnchorRegistry } from './anchors.js';
+import type { TiledAnchorRegistry, TiledLayoutAnchor } from './anchors.js';
 import { fitElasticStack } from './elastic-layout.js';
 import { getTiledFocusRelationPolicy, type TiledFocusRelationPolicy } from './focus-lens.js';
 import { buildTiledRelationIndex, getTiledRelationCandidates, type TiledRelationCandidate, type TiledRelationIndex } from './relation-index.js';
@@ -12,10 +12,12 @@ const TILED_ELASTIC_INTERACTIVE_PREVIOUS_WEIGHT = 24;
 const TILED_ELASTIC_RELATION_TOP_K = 4;
 const TILED_ELASTIC_RELATION_WEIGHT_CAP = 280;
 const TILED_ELASTIC_ACTIVE_RELATION_WEIGHT_CAP = 1800;
-const TILED_ELASTIC_OFFSCREEN_ANNOTATION_WEIGHT_MULTIPLIER = 0.34;
-const TILED_ELASTIC_FALLBACK_ANNOTATION_WEIGHT_MULTIPLIER = 0.22;
-const TILED_ELASTIC_OFFSCREEN_ANNOTATION_MAX_DISPLACEMENT = 520;
-const TILED_ELASTIC_FALLBACK_ANNOTATION_MAX_DISPLACEMENT = 320;
+const TILED_ELASTIC_ANNOTATION_BASE_WEIGHT_MULTIPLIER = 0.16;
+const TILED_ELASTIC_ANNOTATION_SPAN_WEIGHT_MULTIPLIER = 0.74;
+const TILED_ELASTIC_ANNOTATION_BASE_MAX_DISPLACEMENT = 320;
+const TILED_ELASTIC_ANNOTATION_SPAN_MIN_DISPLACEMENT = 180;
+const TILED_ELASTIC_ANNOTATION_SPAN_MAX_DISPLACEMENT = 760;
+const TILED_ELASTIC_ANNOTATION_MIN_SALIENCE = 0.012;
 const TILED_ELASTIC_PASSES = 2;
 
 type DesiredTarget = {
@@ -30,18 +32,13 @@ type RelationDesiredTarget = DesiredTarget & {
 
 type ResolvedEndpointAnchor = {
   center: number;
-  mode: 'visible-span' | 'offscreen-cue' | 'offscreen-node' | 'node' | 'fallback';
-  visibility?: 'visible' | 'above-viewport' | 'below-viewport';
-  offscreenDistance?: number;
+  top: number;
+  bottom: number;
 };
 
 type RelationLayoutPolicy = Pick<TiledFocusRelationPolicy, 'active' | 'displacement'> & {
   layoutWeight: number;
   maxDisplacement?: number;
-};
-
-type AnnotationAnchorContext = {
-  cueAnnotationIds: Set<string>;
 };
 
 export type ElasticTiledPageLayout = TiledPageLayout & {
@@ -195,7 +192,6 @@ function collectRelationDesiredTargets(
   if (layout.nodeId === focusNodeId) return [];
   const viewportHeight = Math.max(1, finiteNumber(input.viewportHeight, 720));
   const candidates = getTiledRelationCandidates(relationIndex, layout.nodeId, focusNodeId);
-  const annotationContext = getAnnotationAnchorContext(input.anchors);
   const targets: RelationDesiredTarget[] = [];
 
   for (const candidate of candidates) {
@@ -203,12 +199,17 @@ function collectRelationDesiredTargets(
     if (!source || source.columnId === layout.columnId) continue;
     const policy = getTiledFocusRelationPolicy(candidate, focusNodeId);
     if (!policy.participatesInLayout) continue;
-    const sourceAnchor = resolveEndpointAnchor(source, candidate, input.anchors, annotationContext);
-    const targetAnchor = resolveEndpointAnchor(layout, candidate, input.anchors, annotationContext);
-    const layoutPolicy = resolveRelationLayoutPolicy(policy, candidate, sourceAnchor, targetAnchor);
+
+    if (candidate.kind === 'annotation') {
+      targets.push(...collectAnnotationRelationTargets(source, layout, candidate, policy, input.anchors, viewportHeight));
+      continue;
+    }
+
+    const sourceAnchor = resolveNodeAnchor(source, input.anchors);
+    const targetAnchor = resolveNodeAnchor(layout, input.anchors);
     const desiredY = source.y + sourceAnchor.center - targetAnchor.center;
-    const clampedY = clampDesiredY(desiredY, layout.baseY, candidate, layoutPolicy, viewportHeight);
-    targets.push({ y: clampedY, weight: layoutPolicy.layoutWeight, kind: 'relation', active: layoutPolicy.active });
+    const clampedY = clampDesiredY(desiredY, layout.baseY, candidate, policy, viewportHeight);
+    targets.push({ y: clampedY, weight: policy.layoutWeight, kind: 'relation', active: policy.active });
   }
 
   return targets;
@@ -233,94 +234,93 @@ function clampDesiredY(
   return Math.min(Math.max(desiredY, baseY - maxDisplacement), baseY + maxDisplacement);
 }
 
-function getAnnotationAnchorContext(anchors: TiledAnchorRegistry | undefined): AnnotationAnchorContext {
-  const annotationAnchors = Object.values(anchors?.annotationAnchors || {});
-  const cueAnnotationIds = new Set<string>();
+function collectAnnotationRelationTargets(
+  source: ElasticTiledPageLayout,
+  target: ElasticTiledPageLayout,
+  candidate: TiledRelationCandidate,
+  policy: TiledFocusRelationPolicy,
+  anchors: TiledAnchorRegistry | undefined,
+  viewportHeight: number,
+): RelationDesiredTarget[] {
+  const targets: RelationDesiredTarget[] = [];
+  const sourceBaseAnchor = resolveNodeAnchor(source, anchors);
+  const targetBaseAnchor = resolveNodeAnchor(target, anchors);
+  const basePolicy: RelationLayoutPolicy = {
+    active: false,
+    displacement: 'bounded',
+    layoutWeight: policy.layoutWeight * TILED_ELASTIC_ANNOTATION_BASE_WEIGHT_MULTIPLIER,
+    maxDisplacement: TILED_ELASTIC_ANNOTATION_BASE_MAX_DISPLACEMENT,
+  };
+  const baseDesiredY = source.y + sourceBaseAnchor.center - targetBaseAnchor.center;
+  targets.push({
+    y: clampDesiredY(baseDesiredY, target.baseY, candidate, basePolicy, viewportHeight),
+    weight: basePolicy.layoutWeight,
+    kind: 'relation',
+    active: false,
+  });
 
-  for (const visibility of ['above-viewport', 'below-viewport'] as const) {
-    const nearest = annotationAnchors
-      .filter((anchor) => anchor.visibility === visibility && anchor.annotationId)
-      .sort((a, b) => finiteNumber(a.offscreenDistance, Number.MAX_SAFE_INTEGER) - finiteNumber(b.offscreenDistance, Number.MAX_SAFE_INTEGER))[0];
-    if (nearest?.annotationId) cueAnnotationIds.add(nearest.annotationId);
-  }
+  const annotationAnchor = getEndpointAnnotationAnchor(source, candidate, anchors)
+    ?? getEndpointAnnotationAnchor(target, candidate, anchors);
+  if (!annotationAnchor) return targets;
 
-  return { cueAnnotationIds };
+  const salience = getAnnotationAnchorSalience(annotationAnchor);
+  if (salience <= TILED_ELASTIC_ANNOTATION_MIN_SALIENCE) return targets;
+
+  const sourceSpanAnchor = annotationAnchor.nodeId === source.nodeId
+    ? anchorFromLayoutAnchor(source, annotationAnchor)
+    : sourceBaseAnchor;
+  const targetSpanAnchor = annotationAnchor.nodeId === target.nodeId
+    ? anchorFromLayoutAnchor(target, annotationAnchor)
+    : targetBaseAnchor;
+  const spanPolicy: RelationLayoutPolicy = {
+    active: false,
+    displacement: 'bounded',
+    layoutWeight: policy.layoutWeight * TILED_ELASTIC_ANNOTATION_SPAN_WEIGHT_MULTIPLIER * salience,
+    maxDisplacement: lerp(TILED_ELASTIC_ANNOTATION_SPAN_MIN_DISPLACEMENT, TILED_ELASTIC_ANNOTATION_SPAN_MAX_DISPLACEMENT, salience),
+  };
+  const spanDesiredY = source.y + sourceSpanAnchor.center - targetSpanAnchor.center;
+  targets.push({
+    y: clampDesiredY(spanDesiredY, target.baseY, candidate, spanPolicy, viewportHeight),
+    weight: spanPolicy.layoutWeight,
+    kind: 'relation',
+    active: false,
+  });
+  return targets;
 }
 
-function resolveEndpointAnchor(
+function resolveNodeAnchor(layout: ElasticTiledPageLayout, anchors: TiledAnchorRegistry | undefined): ResolvedEndpointAnchor {
+  const nodeAnchor = anchors?.nodeAnchors[layout.nodeId];
+  if (!nodeAnchor) {
+    const center = clampAnchor(undefined, layout.height);
+    return { center, top: 0, bottom: Math.max(0, layout.height) };
+  }
+  return anchorFromLayoutAnchor(layout, nodeAnchor);
+}
+
+function getEndpointAnnotationAnchor(
   layout: ElasticTiledPageLayout,
   candidate: TiledRelationCandidate,
   anchors: TiledAnchorRegistry | undefined,
-  annotationContext: AnnotationAnchorContext,
-): ResolvedEndpointAnchor {
-  if (candidate.kind === 'annotation' && candidate.annotationId) {
-    const annotationAnchor = anchors?.annotationAnchors[candidate.annotationId];
-    if (annotationAnchor?.nodeId === layout.nodeId) {
-      if (annotationAnchor.visibility === 'visible') {
-        return {
-          center: clampAnchor(annotationAnchor.center, layout.height),
-          mode: 'visible-span',
-          visibility: annotationAnchor.visibility,
-        };
-      }
-      const offscreenDistance = finiteNumber(annotationAnchor.offscreenDistance, 0);
-      if (annotationContext.cueAnnotationIds.has(candidate.annotationId)) {
-        return {
-          center: clampAnchor(annotationAnchor.center, layout.height),
-          mode: 'offscreen-cue',
-          visibility: annotationAnchor.visibility,
-          offscreenDistance,
-        };
-      }
-      const nodeAnchor = anchors?.nodeAnchors[layout.nodeId];
-      return {
-        center: clampAnchor(nodeAnchor?.center, layout.height),
-        mode: 'offscreen-node',
-        visibility: annotationAnchor.visibility,
-        offscreenDistance,
-      };
-    }
-  }
-
-  const nodeAnchor = anchors?.nodeAnchors[layout.nodeId];
-  if (nodeAnchor) {
-    return {
-      center: clampAnchor(nodeAnchor.center, layout.height),
-      mode: 'node',
-      visibility: nodeAnchor.visibility,
-    };
-  }
-
-  return { center: clampAnchor(undefined, layout.height), mode: 'fallback' };
+): TiledLayoutAnchor | undefined {
+  if (!candidate.annotationId) return undefined;
+  const annotationAnchor = anchors?.annotationAnchors[candidate.annotationId];
+  return annotationAnchor?.nodeId === layout.nodeId ? annotationAnchor : undefined;
 }
 
-function resolveRelationLayoutPolicy(
-  policy: TiledFocusRelationPolicy,
-  candidate: TiledRelationCandidate,
-  sourceAnchor: ResolvedEndpointAnchor,
-  targetAnchor: ResolvedEndpointAnchor,
-): RelationLayoutPolicy {
-  if (candidate.kind !== 'annotation') return policy;
-  const modes = [sourceAnchor.mode, targetAnchor.mode];
-  if (modes.includes('visible-span')) return policy;
-
-  if (modes.includes('offscreen-cue')) {
-    const offscreenDistance = Math.max(sourceAnchor.offscreenDistance || 0, targetAnchor.offscreenDistance || 0);
-    const distanceBoost = Math.min(160, offscreenDistance * 0.2);
-    return {
-      active: false,
-      displacement: 'bounded',
-      layoutWeight: policy.layoutWeight * TILED_ELASTIC_OFFSCREEN_ANNOTATION_WEIGHT_MULTIPLIER,
-      maxDisplacement: TILED_ELASTIC_OFFSCREEN_ANNOTATION_MAX_DISPLACEMENT + distanceBoost,
-    };
-  }
-
+function anchorFromLayoutAnchor(layout: ElasticTiledPageLayout, anchor: TiledLayoutAnchor): ResolvedEndpointAnchor {
   return {
-    active: false,
-    displacement: 'bounded',
-    layoutWeight: policy.layoutWeight * TILED_ELASTIC_FALLBACK_ANNOTATION_WEIGHT_MULTIPLIER,
-    maxDisplacement: TILED_ELASTIC_FALLBACK_ANNOTATION_MAX_DISPLACEMENT,
+    center: clampAnchor(anchor.center, layout.height),
+    top: clampAnchor(anchor.top, layout.height),
+    bottom: clampAnchor(anchor.bottom, layout.height),
   };
+}
+
+function getAnnotationAnchorSalience(anchor: TiledLayoutAnchor): number {
+  const value = finiteNumber(anchor.salience, NaN);
+  if (Number.isFinite(value)) return Math.min(Math.max(value, 0), 1);
+  if (anchor.visibility === 'visible') return 1;
+  const offscreenDistance = finiteNumber(anchor.offscreenDistance, 0);
+  return Math.exp(-((offscreenDistance / 260) ** 2));
 }
 
 function clampAnchor(value: unknown, height: number): number {
@@ -342,6 +342,10 @@ function getAnchorValue(anchors: TiledAnchorMap | undefined, nodeId: string): nu
 
 function normalizePageLayouts(pageLayouts: Record<string, TiledPageLayout> | TiledPageLayout[]): TiledPageLayout[] {
   return Array.isArray(pageLayouts) ? pageLayouts : Object.values(pageLayouts || {});
+}
+
+function lerp(start: number, end: number, t: number): number {
+  return start + (end - start) * Math.min(Math.max(t, 0), 1);
 }
 
 function finiteNumber(value: unknown, fallback: number): number {

@@ -167,7 +167,7 @@ Visibility is part of the annotation-span anchor contract:
 - `visible`: the semantic span is actually visible and may be used as a precise span-level layout anchor.
 - `above-viewport` / `below-viewport`: the span exists but is outside the current reading viewport. Its clamped top/bottom position is an offscreen cue anchor, not a real visible span anchor.
 
-An offscreen annotation relation must not disappear from layout, but it must also not masquerade as an exact visible span. The relation degrades from a precise high-weight span anchor to a weaker bounded endpoint. Only sparse nearest-above / nearest-below annotations may use the clamped top/bottom cue position; all other offscreen annotations fall back to node-level anchors such as the focused visible-content interval, visible panel interval, or panel center. This preserves source/target direction without letting hidden spans pretend to be visible exact anchors.
+An annotation relation is split into two layout forces. The base relation is a stable low-weight node-level force that keeps related panels in the source panel's field even when the precise mark is not measurable. The span refinement is a salience-weighted force based on the mark's content-coordinate distance from the current reading lens center. Visible center marks get high salience, edge marks get less, near-offscreen marks decay continuously, and far-offscreen marks contribute almost no span-level pull. Offscreen marks may still use top/bottom cue positions, but their effect comes from salience rather than a hard visible/offscreen mode switch. This preserves source/target direction without letting hidden spans pretend to be visible exact anchors or snapping lower/upper relations back to the node center.
 
 ## Focus Lens
 
@@ -196,8 +196,8 @@ Annotation relations:
 - Annotation source/target lines inherit annotation color.
 - Prefer exact highlighted mark as source anchor when visible.
 - Offscreen annotation marks should become bounded edge/cue state and should not be clamped to viewport boundaries as if they were visible exact span anchors.
-- The annotation relation itself still participates with reduced weight through node-level fallback anchors, so related panels do not snap back to the top of their column when a span scrolls offscreen.
-- Offscreen cue positions are sparse: only nearest above/below marks may use top/bottom cue anchors; other offscreen relations use node-level fallback anchors.
+- The annotation relation itself still participates through a stable low-weight base relation, so related panels do not snap back to the top of their column when a span scrolls offscreen.
+- Span-level pull uses dynamic salience: closer to the current reading lens center means stronger pull; edge and offscreen marks decay continuously instead of switching between unrelated fallback modes.
 - Stronger than structural edges for focus-context layout scoring.
 - Used to pull annotation-related panels into view around the focused panel.
 

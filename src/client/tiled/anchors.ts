@@ -1,5 +1,6 @@
 import type { RhizoAnnotation, TiledPageLayout } from '../../shared/types.js';
 import { clamp, cssAttr } from '../utils.js';
+import { computeAnnotationSalience, type AnnotationSalienceSide } from './annotation-salience.js';
 
 export type TiledAnchorKind = 'visible-content' | 'annotation-span' | 'visible-panel';
 export type TiledAnchorVisibility = 'visible' | 'above-viewport' | 'below-viewport';
@@ -12,6 +13,13 @@ export type TiledLayoutAnchor = {
   center: number;
   visibility: TiledAnchorVisibility;
   offscreenDistance?: number;
+  salience?: number;
+  salienceSide?: AnnotationSalienceSide;
+  anchorRatio?: number;
+  contentTop?: number;
+  contentBottom?: number;
+  visibleTop?: number;
+  visibleBottom?: number;
   annotationId?: string;
   targetNodeId?: string;
 };
@@ -84,6 +92,12 @@ function measureAnnotationAnchor(root: HTMLElement, annotation: RhizoAnnotation)
   const viewportTopInContent = content.scrollTop;
   const viewportBottomInContent = content.scrollTop + content.clientHeight;
 
+  const salience = computeAnnotationSalience({
+    annotationTop: elementTopInContent,
+    annotationBottom: elementBottomInContent,
+    visibleTop: viewportTopInContent,
+    visibleBottom: viewportBottomInContent,
+  });
   const visibleTopInContent = Math.max(elementTopInContent, viewportTopInContent);
   const visibleBottomInContent = Math.min(elementBottomInContent, viewportBottomInContent);
   if (visibleBottomInContent > visibleTopInContent + 1) {
@@ -95,15 +109,35 @@ function measureAnnotationAnchor(root: HTMLElement, annotation: RhizoAnnotation)
       section.offsetHeight || 0,
       annotation,
       'visible',
+      undefined,
+      salience,
+      elementTopInContent,
+      elementBottomInContent,
+      viewportTopInContent,
+      viewportBottomInContent,
     );
   }
 
-  const visibility: TiledAnchorVisibility = elementBottomInContent < viewportTopInContent ? 'above-viewport' : 'below-viewport';
+  const visibility: TiledAnchorVisibility = salience.side === 'above' ? 'above-viewport' : 'below-viewport';
   const clampedCenterInSection = contentTopInSection + (visibility === 'above-viewport' ? 0 : content.clientHeight);
   const offscreenDistance = visibility === 'above-viewport'
     ? Math.max(0, viewportTopInContent - elementBottomInContent)
     : Math.max(0, elementTopInContent - viewportBottomInContent);
-  return createAnchorFromSectionInterval(section, 'annotation-span', clampedCenterInSection, clampedCenterInSection, section.offsetHeight || 0, annotation, visibility, offscreenDistance);
+  return createAnchorFromSectionInterval(
+    section,
+    'annotation-span',
+    clampedCenterInSection,
+    clampedCenterInSection,
+    section.offsetHeight || 0,
+    annotation,
+    visibility,
+    offscreenDistance,
+    salience,
+    elementTopInContent,
+    elementBottomInContent,
+    viewportTopInContent,
+    viewportBottomInContent,
+  );
 }
 
 function createAnchorFromSectionInterval(
@@ -115,6 +149,11 @@ function createAnchorFromSectionInterval(
   annotation?: RhizoAnnotation,
   visibility: TiledAnchorVisibility = 'visible',
   offscreenDistance?: number,
+  salience?: ReturnType<typeof computeAnnotationSalience>,
+  contentTop?: number,
+  contentBottom?: number,
+  visibleTop?: number,
+  visibleBottom?: number,
 ): TiledLayoutAnchor {
   const height = section.offsetHeight || fallbackHeight || 1;
   const top = clamp(sectionTop, 0, height);
@@ -128,6 +167,13 @@ function createAnchorFromSectionInterval(
     center,
     visibility,
     offscreenDistance,
+    salience: salience?.salience,
+    salienceSide: salience?.side,
+    anchorRatio: salience?.anchorRatio,
+    contentTop,
+    contentBottom,
+    visibleTop,
+    visibleBottom,
     annotationId: annotation?.id,
     targetNodeId: annotation?.targetNodeId,
   };
