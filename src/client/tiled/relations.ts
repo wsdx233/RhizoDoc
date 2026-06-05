@@ -41,12 +41,6 @@ export function createTiledRelationsController(options: TiledRelationsController
 
     const workspace = ensureWorkspace();
     const focusedId = workspace.focus?.nodeId || '';
-    const structuralRelations = state.edges.map((edge) => ({
-      sourceId: edge.sourceId,
-      targetId: edge.targetId,
-      type: 'structural',
-      color: 'var(--md-sys-color-outline)',
-    }));
     const annotationRelations = state.annotations.map((annotation) => ({
       sourceId: annotation.sourceNodeId,
       targetId: annotation.targetNodeId,
@@ -54,7 +48,7 @@ export function createTiledRelationsController(options: TiledRelationsController
       color: `var(--hl-${((Number(annotation.colorIndex) || 0) % 5 + 5) % 5}-fg)`,
     }));
 
-    for (const relation of [...structuralRelations, ...annotationRelations]) {
+    for (const relation of annotationRelations) {
       if (!relation.sourceId || !relation.targetId || relation.sourceId === relation.targetId) continue;
       const source = getSectionAnchor(relation.sourceId, relation.type === 'annotation' ? relation.targetId : '');
       const target = getSectionAnchor(relation.targetId);
