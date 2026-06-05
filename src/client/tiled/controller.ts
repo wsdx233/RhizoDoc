@@ -308,7 +308,7 @@ export function createTiledWorkspaceController(options: TiledWorkspaceController
 
     focusSection((event.target as Element).closest('.tiled-section') as HTMLElement | null);
 
-    const annotated = (event.target as Element).closest('mark.annotated, .math-node.annotated-math') as HTMLElement | null;
+    const annotated = (event.target as Element).closest('mark.annotated, .math-node.annotated-math, .katex.annotated-math') as HTMLElement | null;
     const targetId = annotated?.dataset.refId;
     if (targetId) {
       event.preventDefault();

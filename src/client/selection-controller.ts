@@ -139,7 +139,7 @@ export function createSelectionController(options: SelectionControllerOptions) {
       parent.removeChild(span);
       parent.normalize();
     });
-    document.querySelectorAll('.math-node.retained-math-selection').forEach((mathEl) => {
+    document.querySelectorAll('.math-node.retained-math-selection, .katex.retained-math-selection').forEach((mathEl) => {
       mathEl.classList.remove('retained-math-selection');
     });
   }

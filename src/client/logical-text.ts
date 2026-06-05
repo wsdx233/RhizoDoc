@@ -77,7 +77,7 @@ export function getLogicalTextUnits(container: Node): LogicalTextUnit[] {
     if (node.nodeType !== Node.ELEMENT_NODE) return;
 
     const element = node as HTMLElement;
-    if (element.classList?.contains('math-node')) {
+    if (isMathElement(element)) {
       addUnit({ type: 'math', element, text: getMathLogicalText(element) });
       return;
     }
@@ -141,8 +141,16 @@ function getDomRangeOffsets(container: Node, range: Range) {
   }
 }
 
+function isMathElement(element: HTMLElement) {
+  return element.classList?.contains('math-node') || element.classList?.contains('katex');
+}
+
 function getMathLogicalText(element: HTMLElement) {
-  return element.dataset.mathSource || element.getAttribute('data-math-source') || element.textContent || '';
+  return element.dataset.mathSource
+    || element.getAttribute('data-math-source')
+    || element.querySelector('annotation[encoding="application/x-tex"]')?.textContent
+    || element.textContent
+    || '';
 }
 
 function rangeIntersectsNode(range: Range, node: Node) {

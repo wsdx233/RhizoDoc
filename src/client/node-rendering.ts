@@ -1,6 +1,5 @@
 import { applyAnnotationToContainer } from './annotations.js';
 import type { RhizoDomRefs } from './dom.js';
-import { postProcessNodeContent, renderMarkdown } from './markdown.js';
 import { renderStreamdownMarkdown, unmountStreamdownMarkdown } from './streamdown-renderer.js';
 import { closestElement } from './utils.js';
 
@@ -76,17 +75,16 @@ export function createNodeRenderCoordinator(options: NodeRenderCoordinatorOption
     return Promise.all(pending);
   }
 
-  function syncFullscreenContent(id: string, { contentHtml = null }: any = {}) {
+  async function syncFullscreenContent(id: string) {
     const node = getNode(id);
     if (!node || state.fullscreenNodeId !== id) return;
     if (shouldPreserveContentForSelection(id)) {
       state.deferredRenderNodeIds.add(id);
-      state.deferredRenderPayloads.set(id, { renderer: 'static', options: { contentHtml } });
+      state.deferredRenderPayloads.set(id, { renderer: 'static', options: {} });
       return;
     }
     unmountStreamdownMarkdown(dom.fsContent);
-    dom.fsContent.innerHTML = contentHtml ?? renderMarkdown(node.content || '');
-    postProcessNodeContent(dom.fsContent);
+    await renderStreamdownMarkdown(dom.fsContent, node.content || '', { streaming: false });
     state.annotations
       .filter((annotation: any) => annotation.sourceNodeId === id)
       .forEach((annotation: any) => applyAnnotationToContainer(dom.fsContent, annotation));

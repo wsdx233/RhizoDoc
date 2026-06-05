@@ -1,6 +1,5 @@
 import { applyAnnotationToContainer } from '../annotations.js';
-import { postProcessNodeContent, renderMarkdown } from '../markdown.js';
-import { unmountStreamdownMarkdown } from '../streamdown-renderer.js';
+import { renderStreamdownMarkdown, unmountStreamdownMarkdown } from '../streamdown-renderer.js';
 import { clamp } from '../utils.js';
 import { NODE_COLLAPSE_HEIGHT, NODE_MAX_WIDTH, NODE_MIN_WIDTH, NODE_WIDTH } from './constants.js';
 
@@ -50,7 +49,7 @@ export function createCanvasNodesController(options: {
     updateElement(node.id);
   }
 
-  function updateElement(id: string, { contentHtml = null, preserveContent = false }: any = {}) {
+  async function updateElement(id: string, { preserveContent = false }: any = {}) {
     const node = getNode(id);
     const nodeEl = document.getElementById(id);
     if (!node || !nodeEl) return;
@@ -74,8 +73,7 @@ export function createCanvasNodesController(options: {
     const contentEl = nodeEl.querySelector('.node-content') as HTMLElement | null;
     if (contentEl && !preserveContent) {
       unmountStreamdownMarkdown(contentEl);
-      contentEl.innerHTML = contentHtml ?? renderMarkdown(node.content || '');
-      postProcessNodeContent(contentEl);
+      await renderStreamdownMarkdown(contentEl, node.content || '', { streaming: false });
       applyAnnotationsForSourceNode(node.id);
     }
     updateCollapseState(node.id);
@@ -86,7 +84,7 @@ export function createCanvasNodesController(options: {
     if (count) count.textContent = `${(node.content || '').length} 字`;
 
     requestAnimationFrame(() => {
-      if (state.fullscreenNodeId === node.id && !preserveContent) syncFullscreenContent(node.id, { contentHtml });
+      if (state.fullscreenNodeId === node.id && !preserveContent) syncFullscreenContent(node.id);
       canvasWorkspace.drawEdges();
       canvasWorkspace.updateMinimap();
       if (state.activeView === 'tiled') {

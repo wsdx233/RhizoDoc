@@ -11,7 +11,7 @@ export function demoDocument() {
 
 ## Markdown 增强示例
 
-- 行内公式：$E=mc^2$
+- 行内公式：$$E=mc^2$$
 - 块级公式：
 
 $$

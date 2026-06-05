@@ -339,7 +339,73 @@ body.multi-select-mode .node-content, body.multi-select-mode .node-content * {
   white-space: pre; overflow: visible; overflow-wrap: normal; word-break: normal;
 }
 .node-content pre code.hljs, .fs-content pre code.hljs, .tiled-content pre code.hljs { font-size: 13px; line-height: 1.55; }
-.math-node { border-radius: 3px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.rhizodoc-streamdown [data-streamdown="code-block"] {
+  margin: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 100%;
+  padding: 8px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 14px;
+  background: #161b22;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 200px;
+}
+.rhizodoc-streamdown [data-streamdown="code-block-header"] {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 4px;
+  color: #8b949e;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1;
+}
+.rhizodoc-streamdown [data-streamdown="code-block-header"] span {
+  text-transform: lowercase;
+}
+.rhizodoc-streamdown [data-streamdown="code-block-body"] {
+  overflow-x: auto;
+  border-radius: 10px;
+  background: #24292e;
+  color: #e1e4e8;
+  padding: 12px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.rhizodoc-streamdown [data-streamdown="code-block-body"] pre {
+  margin: 0 !important;
+  max-height: none;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  padding: 0 !important;
+  background: var(--shiki-dark-bg, var(--sdm-bg, #24292e));
+  color: var(--shiki-dark, var(--sdm-fg, #e1e4e8));
+}
+.rhizodoc-streamdown [data-streamdown="code-block-body"] code {
+  display: block;
+  background: transparent !important;
+  color: inherit;
+  padding: 0 !important;
+  white-space: pre;
+  overflow: visible;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.rhizodoc-streamdown [data-streamdown="code-block-body"] code > span {
+  display: block;
+  min-height: 1.55em;
+}
+.rhizodoc-streamdown [data-streamdown="code-block-body"] code > span > span {
+  display: inline;
+  color: var(--sdm-c, inherit);
+}
+.rhizodoc-streamdown [data-streamdown="code-block-body"] code > span > span[style*="--sdm-tbg"] {
+  background-color: var(--sdm-tbg, transparent);
+}
+.math-node, .katex.annotated-math { border-radius: 3px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .math-inline { display: inline; }
 .math-block { display: block; max-width: 100%; }
 .node-content .katex, .fs-content .katex, .tiled-content .katex { font-size: 1.04em; overflow-wrap: normal; word-break: normal; }
@@ -347,11 +413,11 @@ body.multi-select-mode .node-content, body.multi-select-mode .node-content * {
 .node-content .katex-display, .fs-content .katex-display, .tiled-content .katex-display {
   margin: 0.85em 0; padding: 2px 0; overflow-x: auto; overflow-y: hidden;
 }
-.math-node.retained-math-selection {
+.math-node.retained-math-selection, .katex.retained-math-selection {
   background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container);
 }
-.math-node.annotated-math { cursor: pointer; }
-.math-node.annotated-math:hover { filter: brightness(.96) saturate(1.08); }
+.math-node.annotated-math, .katex.annotated-math { cursor: pointer; }
+.math-node.annotated-math:hover, .katex.annotated-math:hover { filter: brightness(.96) saturate(1.08); }
 .math-error {
   display: inline-block; max-width: 100%; padding: 1px 5px; border-radius: 6px;
   background: #FFDAD6; color: #410002; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

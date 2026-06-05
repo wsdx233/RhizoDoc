@@ -1,8 +1,10 @@
 import React from 'react';
+import { flushSync } from 'react-dom';
 import { createRoot, type Root } from 'react-dom/client';
 import { createCodePlugin } from '@streamdown/code';
 import { math as mathPlugin } from '@streamdown/math';
 import { Streamdown } from 'streamdown';
+import 'katex/dist/katex.min.css';
 import 'streamdown/styles.css';
 
 type StreamdownRenderOptions = {
@@ -21,7 +23,7 @@ export function renderStreamdownIsland(container: HTMLElement, markdown: string,
     roots.set(container, root);
   }
 
-  root.render(React.createElement(Streamdown, {
+  const element = React.createElement(Streamdown, {
     animated: false,
     className: 'rhizodoc-streamdown',
     controls: false,
@@ -32,7 +34,10 @@ export function renderStreamdownIsland(container: HTMLElement, markdown: string,
     plugins: streamdownPlugins,
     shikiTheme: ['github-dark', 'github-dark'],
     children: markdown,
-  }));
+  });
+
+  if (streaming) root.render(element);
+  else flushSync(() => root.render(element));
 }
 
 export function unmountStreamdownIsland(container: HTMLElement | null | undefined) {

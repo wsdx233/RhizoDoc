@@ -1,5 +1,5 @@
 import { applyAnnotationToContainer } from '../annotations.js';
-import { postProcessNodeContent, renderMarkdown } from '../markdown.js';
+import { renderStreamdownMarkdown } from '../streamdown-renderer.js';
 import { cssAttr } from '../utils.js';
 
 type TiledRenderControllerOptions = {
@@ -79,11 +79,11 @@ export function createTiledRenderController(options: TiledRenderControllerOption
       content.className = 'tiled-content markdown-body';
       const host = document.createElement('div');
       host.className = 'tiled-markdown-host';
-      host.innerHTML = renderMarkdown(node.content || '');
-      postProcessNodeContent(host);
-      state.annotations
-        .filter((annotation) => annotation.sourceNodeId === node.id)
-        .forEach((annotation) => applyAnnotationToContainer(host, annotation));
+      renderStreamdownMarkdown(host, node.content || '', { streaming: false }).then(() => {
+        state.annotations
+          .filter((annotation) => annotation.sourceNodeId === node.id)
+          .forEach((annotation) => applyAnnotationToContainer(host, annotation));
+      });
       const sentinel = document.createElement('div');
       sentinel.className = 'tiled-bottom-sentinel';
       sentinel.setAttribute('aria-hidden', 'true');

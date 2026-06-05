@@ -30,7 +30,7 @@ export function unwrapMarksForTarget(targetId: string) {
     parent.removeChild(mark);
     parent.normalize();
   });
-  document.querySelectorAll<HTMLElement>('.math-node.annotated-math').forEach((mathEl) => {
+  document.querySelectorAll<HTMLElement>('.math-node.annotated-math, .katex.annotated-math').forEach((mathEl) => {
     if (mathEl.dataset.refId !== targetId) return;
     mathEl.classList.remove('annotated-math');
     delete mathEl.dataset.refId;

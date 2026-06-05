@@ -132,7 +132,7 @@ export function createCanvasInteractionsController(options: {
       return;
     }
 
-    const annotated = (event.target as Element).closest('mark.annotated, .math-node.annotated-math') as HTMLElement | null;
+    const annotated = (event.target as Element).closest('mark.annotated, .math-node.annotated-math, .katex.annotated-math') as HTMLElement | null;
     if (!annotated) return;
     const targetId = annotated.dataset.refId;
     if (targetId) canvasWorkspace.focusNode(targetId);

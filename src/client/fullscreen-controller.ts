@@ -36,7 +36,7 @@ export function createFullscreenController(options: FullscreenControllerOptions)
   }
 
   function handleContentClick(event: MouseEvent) {
-    const annotated = (event.target as Element).closest('mark.annotated, .math-node.annotated-math') as HTMLElement | null;
+    const annotated = (event.target as Element).closest('mark.annotated, .math-node.annotated-math, .katex.annotated-math') as HTMLElement | null;
     const targetId = annotated?.dataset.refId;
     if (targetId) canvasWorkspace.focusNode(targetId);
   }
