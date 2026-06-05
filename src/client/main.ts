@@ -2,6 +2,7 @@ import './styles.css';
 import { fetchJson } from './api.js';
 import { demoDocument } from './demo.js';
 import { byId, collectDomRefs } from './dom.js';
+import { positionContextMenu } from './floating.js';
 import { createFullscreenController } from './fullscreen-controller.js';
 import { createGraphController } from './graph/controller.js';
 import { createLLMGenerationController } from './llm/generation.js';
@@ -474,9 +475,7 @@ function setMenuItemLabel(menuItem, iconName, label) {
 
 function showMenu(menu, clientX, clientY) {
   menu.style.display = 'flex';
-  const rect = menu.getBoundingClientRect();
-  menu.style.left = `${Math.min(clientX, window.innerWidth - rect.width - 8)}px`;
-  menu.style.top = `${Math.min(clientY, window.innerHeight - rect.height - 8)}px`;
+  void positionContextMenu(menu, clientX, clientY);
 }
 
 function isFlowObject(value) {

@@ -1,6 +1,7 @@
 import type { RhizoDomRefs } from './dom.js';
+import { positionSelectionTooltip } from './floating.js';
 import { forEachLogicalTextSegment, getLogicalRangeSelection } from './logical-text.js';
-import { clamp, closestElement, cssAttr } from './utils.js';
+import { closestElement, cssAttr } from './utils.js';
 
 type SelectionControllerOptions = {
   dom: RhizoDomRefs;
@@ -55,10 +56,8 @@ export function createSelectionController(options: SelectionControllerOptions) {
 
     if (state.isNativeTextSelecting) return;
 
-    const rect = range.getBoundingClientRect();
     dom.tooltip.style.display = 'flex';
-    dom.tooltip.style.left = `${clamp(rect.left + rect.width / 2, 120, window.innerWidth - 120)}px`;
-    dom.tooltip.style.top = `${Math.max(76, rect.top - 14)}px`;
+    void positionSelectionTooltip(dom.tooltip, range, { contextElement: contentEl });
     dom.promptInput.value = '';
   }
 
