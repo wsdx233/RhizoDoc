@@ -312,7 +312,7 @@ function collectRelationProposals(
   for (const candidate of candidates) {
     const source = snapshotByNodeId.get(candidate.sourceId);
     if (!source || source.columnId === layout.columnId) continue;
-    const policy = getTiledFocusRelationPolicy(candidate, focusNodeId);
+    const policy = getEffectiveRelationPolicy(candidate, focusNodeId, relationIndex);
     if (!policy.participatesInLayout) continue;
 
     if (candidate.kind === 'annotation') {
@@ -320,8 +320,9 @@ function collectRelationProposals(
       continue;
     }
 
-    const sourceAnchor = resolveNodeAnchor(source, input.anchors);
-    const targetAnchor = resolveNodeAnchor(layout, input.anchors);
+    const structuralActivePath = isStructuralActivePathProposal(candidate, policy);
+    const sourceAnchor = structuralActivePath ? resolvePanelTopAnchor() : resolveNodeAnchor(source, input.anchors);
+    const targetAnchor = structuralActivePath ? resolvePanelTopAnchor() : resolveNodeAnchor(layout, input.anchors);
     proposals.push({
       desiredY: source.y + sourceAnchor.center - targetAnchor.center,
       weight: policy.layoutWeight,
@@ -337,6 +338,53 @@ function collectRelationProposals(
   }
 
   return proposals;
+}
+
+function isStructuralActivePathProposal(candidate: TiledRelationCandidate, policy: TiledFocusRelationPolicy): boolean {
+  return candidate.kind === 'structural'
+    && candidate.structuralDirection === 'child-to-parent'
+    && policy.active
+    && policy.displacement === 'exact';
+}
+
+function resolvePanelTopAnchor(): ResolvedEndpointAnchor {
+  return { center: 0, top: 0, bottom: 0 };
+}
+
+function getEffectiveRelationPolicy(
+  candidate: TiledRelationCandidate,
+  focusNodeId: string,
+  relationIndex: TiledRelationIndex,
+): TiledFocusRelationPolicy {
+  const policy = getTiledFocusRelationPolicy(candidate, focusNodeId);
+  if (!isFocusedAncestorPathCandidate(candidate, focusNodeId, relationIndex)) return policy;
+  return {
+    role: 'active-path',
+    participatesInLayout: true,
+    active: true,
+    layoutWeight: candidate.weight + 1180,
+    displacement: 'exact',
+  };
+}
+
+function isFocusedAncestorPathCandidate(
+  candidate: TiledRelationCandidate,
+  focusNodeId: string,
+  relationIndex: TiledRelationIndex,
+): boolean {
+  if (!focusNodeId || candidate.kind !== 'structural' || candidate.structuralDirection !== 'child-to-parent') return false;
+  return candidate.sourceId === focusNodeId || isAncestorOfFocus(candidate.sourceId, focusNodeId, relationIndex);
+}
+
+function isAncestorOfFocus(nodeId: string, focusNodeId: string, relationIndex: TiledRelationIndex): boolean {
+  let current = relationIndex.parentByNodeId.get(focusNodeId) || '';
+  const seen = new Set<string>();
+  while (current && !seen.has(current)) {
+    if (current === nodeId) return true;
+    seen.add(current);
+    current = relationIndex.parentByNodeId.get(current) || '';
+  }
+  return false;
 }
 
 function clampDesiredY(
@@ -397,7 +445,8 @@ function collectAnnotationRelationProposals(
   const targetSpanAnchor = annotationAnchor.nodeId === target.nodeId
     ? anchorFromLayoutAnchor(target, annotationAnchor)
     : targetBaseAnchor;
-  const definesRelationField = candidate.annotationAnchorKind !== 'title'
+  const definesRelationField = policy.active
+    && candidate.annotationAnchorKind !== 'title'
     && annotationAnchor.visibility === 'visible'
     && salience >= TILED_ELASTIC_ACTIVE_ANNOTATION_MIN_SALIENCE;
   const spanActive = policy.active && definesRelationField;

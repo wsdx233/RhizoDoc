@@ -371,6 +371,48 @@ describe('computeElasticTiledLayouts', () => {
     expect(byId.get('unrelated-lower')!.y - byId.get('middle-c')!.y - byId.get('middle-c')!.height).toBeLessThan(120);
   });
 
+  it('does not let visible ambient annotations define a relation field from non-focused panel scroll', () => {
+    const targetIds = ['other-language', 'gpu-architecture', 'atomic-primitives', 'memory-barrier', 'jmm'];
+    const nodes = [node('source'), ...targetIds.map((id) => node(id))];
+    const columns = [column('depth-1', 1, ['source']), column('depth-2', 2, targetIds)];
+    const pageLayouts: Record<string, TiledPageLayout> = {
+      source: layout('source', 'depth-1', 1, 0, 52, 517.75),
+      'other-language': layout('other-language', 'depth-2', 2, 0, 52, 360),
+      'gpu-architecture': layout('gpu-architecture', 'depth-2', 2, 1, 412, 360),
+      'atomic-primitives': layout('atomic-primitives', 'depth-2', 2, 2, 772, 583.75),
+      'memory-barrier': layout('memory-barrier', 'depth-2', 2, 3, 1355.75, 360),
+      jmm: layout('jmm', 'depth-2', 2, 4, 1715.75, 360),
+    };
+
+    const result = computeElasticTiledLayouts({
+      columns,
+      pageLayouts,
+      nodes,
+      edges: [],
+      annotations: [
+        annotation('source-gpu', 'source', 'gpu-architecture'),
+        annotation('source-atomic', 'source', 'atomic-primitives'),
+        annotation('source-barrier', 'source', 'memory-barrier'),
+        annotation('source-jmm', 'source', 'jmm'),
+      ],
+      focusNodeId: 'atomic-primitives',
+      viewportHeight: 720,
+      anchors: anchorRegistry({
+        node: { source: 258, 'atomic-primitives': 260 },
+        annotations: {
+          'source-jmm': { nodeId: 'source', center: 140, targetNodeId: 'jmm' },
+        },
+      }),
+    });
+    const byId = new Map(result.map((item) => [item.nodeId, item]));
+    const gpu = byId.get('gpu-architecture')!;
+    const atomic = byId.get('atomic-primitives')!;
+    const gapBeforeAtomic = atomic.y - gpu.y - gpu.height;
+
+    expect(Math.abs(byId.get('jmm')!.fieldOffset)).toBeLessThan(1);
+    expect(gapBeforeAtomic).toBeLessThan(80);
+  });
+
   it('keeps weak non-current annotation relations inside the visible relation field instead of reopening holes', () => {
     const targetIds = ['other-language', 'gpu-architecture', 'atomic-primitives', 'memory-barrier', 'jmm'];
     const nodes = [node('source'), ...targetIds.map((id) => node(id))];
@@ -561,7 +603,9 @@ describe('computeElasticTiledLayouts', () => {
       }),
     });
 
-    expect(result.find((item) => item.nodeId === 'target')!.y).toBeGreaterThan(260);
+    const target = result.find((item) => item.nodeId === 'target')!;
+    expect(target.y).toBeGreaterThan(180);
+    expect(target.fieldOffset).toBeCloseTo(0);
   });
 
   it('ignores previous rendered positions in canonical mode but uses them in interactive mode', () => {
@@ -617,7 +661,7 @@ describe('computeElasticTiledLayouts', () => {
     expect(result.find((item) => item.nodeId === 'target')!.y).toBeGreaterThan(250);
   });
 
-  it('aligns a focused child with its parent by warping the parent column active-path field', () => {
+  it('aligns a focused child with its parent top by warping the parent column active-path field', () => {
     const nodes = [node('blocking'), node('parent'), node('child', 'parent')];
     const columns = [column('depth-0', 0, ['blocking', 'parent']), column('depth-1', 1, ['child'])];
     const pageLayouts = {
@@ -639,6 +683,30 @@ describe('computeElasticTiledLayouts', () => {
 
     expect(Math.abs(byId.get('parent')!.y - byId.get('child')!.y)).toBeLessThan(24);
     expect(byId.get('blocking')!.fieldOffset).toBeLessThan(-900);
+  });
+
+  it('aligns active ancestor-path panel tops instead of content centers', () => {
+    const nodes = [node('root'), node('parent', 'root'), node('child', 'parent')];
+    const columns = [column('depth-0', 0, ['root']), column('depth-1', 1, ['parent']), column('depth-2', 2, ['child'])];
+    const pageLayouts = {
+      root: layout('root', 'depth-0', 0, 0, 0, 360),
+      parent: layout('parent', 'depth-1', 1, 0, 0, 520),
+      child: layout('child', 'depth-2', 2, 0, 0, 584),
+    };
+
+    const result = computeElasticTiledLayouts({
+      columns,
+      pageLayouts,
+      nodes,
+      edges: [edge('root', 'parent'), edge('parent', 'child')],
+      annotations: [],
+      focusNodeId: 'child',
+      viewportHeight: 720,
+    });
+    const byId = new Map(result.map((item) => [item.nodeId, item]));
+
+    expect(Math.abs(byId.get('root')!.y - byId.get('parent')!.y)).toBeLessThan(8);
+    expect(Math.abs(byId.get('parent')!.y - byId.get('child')!.y)).toBeLessThan(8);
   });
 
   it('keeps a many-child parent near the currently focused child', () => {
