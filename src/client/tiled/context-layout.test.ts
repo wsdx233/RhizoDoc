@@ -617,6 +617,30 @@ describe('computeElasticTiledLayouts', () => {
     expect(result.find((item) => item.nodeId === 'target')!.y).toBeGreaterThan(250);
   });
 
+  it('aligns a focused child with its parent by warping the parent column active-path field', () => {
+    const nodes = [node('blocking'), node('parent'), node('child', 'parent')];
+    const columns = [column('depth-0', 0, ['blocking', 'parent']), column('depth-1', 1, ['child'])];
+    const pageLayouts = {
+      blocking: layout('blocking', 'depth-0', 0, 0, 0, 960),
+      parent: layout('parent', 'depth-0', 0, 1, 960, 360),
+      child: layout('child', 'depth-1', 1, 0, 0, 360),
+    };
+
+    const result = computeElasticTiledLayouts({
+      columns,
+      pageLayouts,
+      nodes,
+      edges: [edge('parent', 'child')],
+      annotations: [],
+      focusNodeId: 'child',
+      viewportHeight: 720,
+    });
+    const byId = new Map(result.map((item) => [item.nodeId, item]));
+
+    expect(Math.abs(byId.get('parent')!.y - byId.get('child')!.y)).toBeLessThan(24);
+    expect(byId.get('blocking')!.fieldOffset).toBeLessThan(-900);
+  });
+
   it('keeps a many-child parent near the currently focused child', () => {
     const childIds = Array.from({ length: 30 }, (_, index) => `child-${index}`);
     const nodes = [node('parent'), ...childIds.map((id) => node(id, 'parent'))];

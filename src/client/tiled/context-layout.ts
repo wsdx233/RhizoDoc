@@ -19,7 +19,7 @@ const TILED_ELASTIC_ANNOTATION_SPAN_MIN_DISPLACEMENT = 180;
 const TILED_ELASTIC_ANNOTATION_SPAN_MAX_DISPLACEMENT = 760;
 const TILED_ELASTIC_ANNOTATION_MIN_SALIENCE = 0.012;
 const TILED_ELASTIC_ACTIVE_ANNOTATION_MIN_SALIENCE = 0.32;
-const TILED_ELASTIC_PASSES = 2;
+const TILED_ELASTIC_PASSES = 4;
 
 type LayoutForceRole = 'compact' | 'focus' | 'interactive' | 'annotation-base' | 'annotation-span' | 'relation';
 type RelationProposalRole = 'annotation-base' | 'annotation-span' | 'relation';
@@ -45,7 +45,7 @@ type RelationFieldObservation = {
   compactY: number;
   desiredY: number;
   weight: number;
-  role: 'annotation-span';
+  role: 'annotation-span' | 'active-path';
 };
 
 type RelationField = {
@@ -235,7 +235,7 @@ function collectRelationFieldObservations(layoutInputs: ColumnLayoutInput[]): Re
       compactY: layout.compactY,
       desiredY: proposal.desiredY,
       weight: proposal.weight,
-      role: 'annotation-span' as const,
+      role: proposal.role === 'annotation-span' ? 'annotation-span' as const : 'active-path' as const,
     })));
 }
 
@@ -329,6 +329,10 @@ function collectRelationProposals(
       active: policy.active,
       candidate,
       policy,
+      definesRelationField: candidate.kind === 'structural'
+        && candidate.structuralDirection === 'child-to-parent'
+        && policy.active
+        && policy.displacement === 'exact',
     });
   }
 
