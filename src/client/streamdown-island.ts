@@ -14,6 +14,7 @@ type StreamdownRenderOptions = {
 const roots = new WeakMap<HTMLElement, Root>();
 const codePlugin = createCodePlugin({ themes: ['github-dark', 'github-dark'] });
 const streamdownPlugins = { code: codePlugin, math: mathPlugin };
+const streamdownLinkSafety = { enabled: false };
 
 export function renderStreamdownIsland(container: HTMLElement, markdown: string, { streaming = true }: StreamdownRenderOptions = {}) {
   let root = roots.get(container);
@@ -29,6 +30,7 @@ export function renderStreamdownIsland(container: HTMLElement, markdown: string,
     controls: false,
     isAnimating: streaming,
     lineNumbers: false,
+    linkSafety: streamdownLinkSafety,
     mode: 'streaming',
     parseIncompleteMarkdown: true,
     plugins: streamdownPlugins,

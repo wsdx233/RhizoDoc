@@ -422,7 +422,32 @@ body.multi-select-mode .node-content, body.multi-select-mode .node-content * {
   display: inline-block; max-width: 100%; padding: 1px 5px; border-radius: 6px;
   background: #FFDAD6; color: #410002; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
-.node-content a, .fs-content a, .tiled-content a { color: var(--md-sys-color-primary); }
+.node-content a, .fs-content a, .tiled-content a,
+.rhizodoc-streamdown [data-streamdown="link"] {
+  color: var(--md-sys-color-primary);
+}
+.rhizodoc-streamdown button[data-streamdown="link"] {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  display: inline;
+  font: inherit;
+  text-align: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.rhizodoc-streamdown a[data-streamdown="link"] {
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+.rhizodoc-streamdown a[data-streamdown="link"]:hover,
+.rhizodoc-streamdown button[data-streamdown="link"]:hover {
+  color: color-mix(in srgb, var(--md-sys-color-primary) 82%, #000);
+}
 .node-content table, .fs-content table, .tiled-content table { border-collapse: collapse; width: 100%; font-size: 14px; }
 .node-content th, .node-content td, .fs-content th, .fs-content td, .tiled-content th, .tiled-content td { border: 1px solid var(--md-sys-color-surface-container-high); padding: 6px 8px; text-align: left; }
 .node-content th, .fs-content th, .tiled-content th { background: var(--md-sys-color-surface-container); }
