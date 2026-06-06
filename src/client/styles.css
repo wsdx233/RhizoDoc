@@ -1034,7 +1034,7 @@ button { color: inherit; }
   box-shadow: var(--md-sys-color-elevation-1);
 }
 
-.brand { display: flex; align-items: center; gap: 12px; min-width: 228px; color: var(--md-sys-color-primary); }
+.brand { display: flex; align-items: center; gap: 12px; min-width: 0; color: var(--md-sys-color-primary); }
 .brand > .material-symbols-outlined { font-size: 29px; }
 .brand strong { display: block; font-size: 16px; line-height: 1.2; color: var(--md-sys-color-on-surface); font-weight: 700; }
 .brand span:last-child { display: block; font-size: 12px; color: var(--md-sys-color-outline); max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
