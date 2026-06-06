@@ -14,6 +14,7 @@ import { createCanvasWorkspaceController } from './canvas/controller.js';
 import { createCanvasInteractionsController, isEditableTarget } from './canvas/interactions.js';
 import { createCanvasNodesController } from './canvas/nodes.js';
 import { createTiledWorkspaceController } from './tiled/controller.js';
+import { initThemeControls } from './theme.js';
 import { createProgressCard as createProgressCardElement, showToast as showToastMessage } from './ui.js';
 import { escapeHtml } from './utils.js';
 import { isFlowObject as isValidFlowShape } from '../shared/schemas.js';
@@ -183,6 +184,12 @@ async function init() {
 }
 
 function bindEvents() {
+  initThemeControls({
+    paletteSelect: DOM.themePalette,
+    modeSelect: DOM.themeMode,
+    resolvedLabel: DOM.themeCurrent,
+  });
+
   byId('btn-open-initial-file').addEventListener('click', () => DOM.initialFileInput.click());
   DOM.initialFileInput.addEventListener('change', async () => {
     await handleDocumentFile(DOM.initialFileInput.files?.[0], { fromInitial: true });

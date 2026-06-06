@@ -23,6 +23,9 @@ export type RhizoDomRefs = {
   selectionBox: HTMLElement;
   viewCanvasButton: HTMLButtonElement;
   viewTiledButton: HTMLButtonElement;
+  themePalette: HTMLSelectElement;
+  themeMode: HTMLSelectElement;
+  themeCurrent: HTMLElement;
 
   initialFileInput: HTMLInputElement;
   docFileInput: HTMLInputElement;
@@ -68,6 +71,9 @@ export function collectDomRefs(): RhizoDomRefs {
     selectionBox: byId('selection-box'),
     viewCanvasButton: byId('btn-view-canvas'),
     viewTiledButton: byId('btn-view-tiled'),
+    themePalette: byId('theme-palette'),
+    themeMode: byId('theme-mode'),
+    themeCurrent: byId('theme-current'),
 
     initialFileInput: byId('initial-file-input'),
     docFileInput: byId('doc-file-input'),

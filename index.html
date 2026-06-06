@@ -9,6 +9,34 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
+  <script>
+    (() => {
+      const fallback = { palette: 'default', mode: 'system' };
+      let preference = fallback;
+      try {
+        const raw = localStorage.getItem('rhizodoc-theme');
+        if (raw) preference = JSON.parse(raw);
+      } catch {}
+      if (!preference || typeof preference !== 'object') preference = fallback;
+      const palettes = ['default', 'catppuccin', 'dracula', 'nord', 'tokyo-night', 'gruvbox', 'solarized', 'vitesse', 'rose-pine', 'everforest', 'material', 'one', 'monokai'];
+      const palette = palettes.includes(preference.palette) ? preference.palette : fallback.palette;
+      const mode = ['system', 'light', 'dark'].includes(preference.mode) ? preference.mode : fallback.mode;
+      const systemPrefersDark = typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches;
+      const scheme = mode === 'system' ? (systemPrefersDark ? 'dark' : 'light') : mode;
+      document.documentElement.dataset.palette = palette;
+      document.documentElement.dataset.scheme = scheme;
+      const codeThemes = {
+        default: ['github-light', 'github-dark'], catppuccin: ['catppuccin-latte', 'catppuccin-mocha'], dracula: ['light-plus', 'dracula'], nord: ['light-plus', 'nord'],
+        'tokyo-night': ['light-plus', 'tokyo-night'], gruvbox: ['gruvbox-light-medium', 'gruvbox-dark-medium'], solarized: ['solarized-light', 'solarized-dark'],
+        vitesse: ['vitesse-light', 'vitesse-dark'], 'rose-pine': ['rose-pine-dawn', 'rose-pine'], everforest: ['everforest-light', 'everforest-dark'],
+        material: ['material-theme-lighter', 'material-theme-palenight'], one: ['one-light', 'one-dark-pro'], monokai: ['light-plus', 'monokai'],
+      }[palette];
+      document.documentElement.dataset.themeMode = mode;
+      document.documentElement.dataset.codeThemeLight = codeThemes[0];
+      document.documentElement.dataset.codeThemeDark = codeThemes[1];
+      document.documentElement.style.colorScheme = scheme;
+    })();
+  </script>
 </head>
 <body>
   <header id="topbar">
@@ -29,6 +57,11 @@
       <button id="btn-load-flow" class="md-btn filled tonal"><span class="material-symbols-outlined">upload_file</span>加载流程图</button>
       <button id="btn-server-save" class="md-btn ghost"><span class="material-symbols-outlined">cloud_upload</span>存到服务端</button>
       <button id="btn-server-load" class="md-btn ghost"><span class="material-symbols-outlined">cloud_download</span>服务端加载</button>
+      <span class="theme-controls" role="group" aria-label="主题设置">
+        <label class="theme-control" title="主题色"><span class="material-symbols-outlined" aria-hidden="true">palette</span><select id="theme-palette" class="theme-select" aria-label="主题色"></select></label>
+        <label class="theme-control" title="外观"><span class="material-symbols-outlined" aria-hidden="true">contrast</span><select id="theme-mode" class="theme-select" aria-label="外观"></select></label>
+        <span id="theme-current" class="theme-current" aria-live="polite"></span>
+      </span>
       <span class="view-switch" role="group" aria-label="视图切换">
         <button id="btn-view-canvas" class="md-btn filled tonal" aria-pressed="true"><span class="material-symbols-outlined">conversion_path</span>画布</button>
         <button id="btn-view-tiled" class="md-btn ghost" aria-pressed="false"><span class="material-symbols-outlined">view_column</span>平铺</button>
